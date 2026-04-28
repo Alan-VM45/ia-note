@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EvoClass - IA Note</title>
+    <link rel="stylesheet" href="css/style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script type="module">
+        import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+        mermaid.initialize({ startOnLoad: false, theme: 'dark' });
+        window.mermaid = mermaid;
+    </script>
+</head>
+<body>
+    
+    <!-- VISTA PRINCIPAL: Lista de Clases -->
+    <div id="view-list" class="view active">
+        <header class="app-header">
+            <div class="logo">EvoClass </div>
+            <div class="filter-chips">
+                <button class="chip active">Todo</button>
+                <button class="chip">Reuniones</button>
+                <button class="chip">Clases</button>
+                <button class="chip">Carpetas</button>
+            </div>
+            <div class="search-bar">
+                <span>🔍</span> <input type="text" placeholder="Buscar">
+            </div>
+        </header>
+        
+        <main class="list-container">
+            <h3 class="section-title">Tus Grabaciones</h3>
+            <div id="classes-list" class="classes-list">
+                <!-- Se inyectarán por JS -->
+                <div class="loading-text">Cargando...</div>
+            </div>
+        </main>
+    </div>
+
+    <!-- VISTA DE GRABACIÓN -->
+    <div id="view-record" class="view">
+        <header class="app-header">
+            <button class="btn-icon" id="btn-back-record">←</button>
+            <h2>Grabar Nueva Clase</h2>
+        </header>
+        <main class="record-container">
+            <div class="record-status" id="record-status">Listo para grabar</div>
+            <div class="record-timer" id="record-timer">00:00</div>
+            
+            <div class="loading hidden" id="record-loading">
+                <div class="spinner"></div>
+                <p>Gemini está procesando el audio. Esto puede tardar...</p>
+            </div>
+        </main>
+        
+        <div class="record-controls">
+            <button id="btn-start-record" class="btn-record-main">🎙️</button>
+            <button id="btn-stop-record" class="btn-stop-main hidden">⏹️</button>
+        </div>
+    </div>
+
+    <!-- VISTA DE DETALLE: Clase -->
+    <div id="view-detail" class="view">
+        <header class="detail-header">
+            <div class="header-top">
+                <button class="btn-icon" id="btn-back-detail">←</button>
+                <div class="header-actions">
+                    <button class="btn-icon">📤</button>
+                    <button class="btn-icon">⋯</button>
+                </div>
+            </div>
+            <h2 id="detail-title">Cargando...</h2>
+            
+            <!-- Tabs -->
+            <div class="tabs">
+                <button class="tab-btn" data-target="tab-transcription">📝</button>
+                <button class="tab-btn active" data-target="tab-summary">📑 Resumen</button>
+                <button class="tab-btn" data-target="tab-mindmap">🔀 Mapa</button>
+                <button class="tab-btn" data-target="tab-chat">🤖 Chat IA</button>
+            </div>
+        </header>
+        
+        <main class="detail-content">
+            <!-- Tab: Transcripción -->
+            <div id="tab-transcription" class="tab-pane">
+                <div class="transcription-content" id="content-transcription"></div>
+            </div>
+            
+            <!-- Tab: Resumen -->
+            <div id="tab-summary" class="tab-pane active">
+                <button class="btn primary btn-full" id="btn-export-word" style="margin-bottom: 1.5rem; background-color: #2563eb;">📄 Guardar como Word</button>
+                <div class="markdown-content" id="content-summary"></div>
+            </div>
+            
+            <!-- Tab: Mapa Mental -->
+            <div id="tab-mindmap" class="tab-pane">
+                <div class="mermaid" id="content-mindmap"></div>
+                <button class="btn primary btn-full" id="btn-render-map">Renderizar Mapa</button>
+            </div>
+            
+            <!-- Tab: Chat -->
+            <div id="tab-chat" class="tab-pane">
+                <div class="chat-history" id="detail-chat-history">
+                    <div class="chat-msg bot">¡Hola! Soy Gemini. ¿Qué quieres saber sobre esta clase?</div>
+                </div>
+                <div class="chat-input-area">
+                    <input type="text" id="detail-chat-input" placeholder="Pregunta lo que quieras...">
+                    <button class="btn-icon" id="detail-btn-send">➤</button>
+                </div>
+            </div>
+        </main>
+        
+        <!-- Reproductor Inferior -->
+        <div class="audio-player">
+            <audio id="class-audio" controls></audio>
+        </div>
+    </div>
+
+    <!-- NAVEGACIÓN INFERIOR -->
+    <nav class="bottom-nav">
+        <button class="nav-item active" id="nav-home">🏠</button>
+        <button class="nav-fab" id="nav-record">+</button>
+        <button class="nav-item">👤</button>
+    </nav>
+
+    <script src="js/app.js"></script>
+</body>
+</html>

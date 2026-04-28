@@ -1,0 +1,18 @@
+# Dependencias de Node
+node_modules/
+
+# Variables de Entorno (¡Contiene la API Key!)
+.env
+
+# Base de Datos Local
+database.json
+
+# Archivos de Audio Temporales y Permanentes
+uploads/
+frontend/audio/*.webm
+frontend/audio/*.wav
+frontend/audio/*.mp3
+
+# Archivos del sistema operativo
+.DS_Store
+Thumbs.db
