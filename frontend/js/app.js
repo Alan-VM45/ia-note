@@ -2,14 +2,17 @@
 let mediaRecorder;
 let audioChunks = [];
 let isRecording = false;
-let currentClass = null; // Guardará el objeto de la clase actual
+let currentClass = null; 
 let recordingInterval;
 let recordingTime = 0;
+let userToken = localStorage.getItem('token');
 
 // Elementos DOM
+const viewAuth = document.getElementById('view-auth');
 const viewList = document.getElementById('view-list');
 const viewRecord = document.getElementById('view-record');
 const viewDetail = document.getElementById('view-detail');
+const mainNav = document.getElementById('main-nav');
 
 // Navegación
 document.getElementById('nav-home').addEventListener('click', () => switchView('list'));
@@ -20,49 +23,113 @@ document.getElementById('btn-back-detail').addEventListener('click', () => {
     switchView('list');
 });
 
-// Botones de Grabación
-const btnStartRecord = document.getElementById('btn-start-record');
-const btnStopRecord = document.getElementById('btn-stop-record');
-const recordStatus = document.getElementById('record-status');
-const recordTimer = document.getElementById('record-timer');
-const recordLoading = document.getElementById('record-loading');
+// Auth Links
+document.getElementById('go-register').addEventListener('click', (e) => {
+    e.preventDefault();
+    document.getElementById('login-form').classList.add('hidden');
+    document.getElementById('register-form').classList.remove('hidden');
+});
+document.getElementById('go-login').addEventListener('click', (e) => {
+    e.preventDefault();
+    document.getElementById('register-form').classList.add('hidden');
+    document.getElementById('login-form').classList.remove('hidden');
+});
 
 // Inicialización
 document.addEventListener('DOMContentLoaded', () => {
-    loadClasses();
+    if (userToken) {
+        showApp();
+    } else {
+        showAuth();
+    }
 });
+
+// --- Lógica de Autenticación ---
+async function handleAuth(type) {
+    const user = document.getElementById(type === 'login' ? 'login-user' : 'reg-user').value.trim();
+    const pass = document.getElementById(type === 'login' ? 'login-pass' : 'reg-pass').value.trim();
+
+    if (!user || !pass) return showModal('Completa todos los campos');
+
+    try {
+        const response = await fetch(`/api/${type}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username: user, password: pass })
+        });
+        const data = await response.json();
+
+        if (data.error) throw new Error(data.error);
+
+        if (type === 'login') {
+            localStorage.setItem('token', data.token);
+            userToken = data.token;
+            showApp();
+        } else {
+            showModal('¡Cuenta creada! Ya puedes iniciar sesión');
+            document.getElementById('go-login').click();
+        }
+    } catch (err) {
+        showModal(err.message);
+    }
+}
+
+document.getElementById('btn-login').addEventListener('click', () => handleAuth('login'));
+document.getElementById('btn-register').addEventListener('click', () => handleAuth('register'));
+document.getElementById('btn-logout').addEventListener('click', () => {
+    localStorage.removeItem('token');
+    userToken = null;
+    showAuth();
+});
+
+function showAuth() {
+    switchView('auth');
+    mainNav.classList.add('hidden');
+}
+
+function showApp() {
+    mainNav.classList.remove('hidden');
+    switchView('list');
+}
 
 // --- Lógica de Vistas ---
 function switchView(viewName) {
     document.querySelectorAll('.view').forEach(el => el.classList.remove('active'));
+    const target = document.getElementById(`view-${viewName}`);
+    if (target) target.classList.add('active');
     
-    if (viewName === 'list') {
-        viewList.classList.add('active');
-        loadClasses();
-    } else if (viewName === 'record') {
-        viewRecord.classList.add('active');
-    } else if (viewName === 'detail') {
-        viewDetail.classList.add('active');
-    }
+    if (viewName === 'list') loadClasses();
 }
 
-// --- Lógica de Base de Datos (API) ---
+// --- API Helper ---
+async function apiFetch(url, options = {}) {
+    options.headers = {
+        ...options.headers,
+        'Authorization': `Bearer ${userToken}`
+    };
+    const response = await fetch(url, options);
+    if (response.status === 401 || response.status === 403) {
+        localStorage.removeItem('token');
+        showAuth();
+        throw new Error('Sesión expirada');
+    }
+    return response.json();
+}
+
+// --- Lógica de Base de Datos ---
 async function loadClasses() {
     try {
-        const response = await fetch('/api/classes');
-        const classes = await response.json();
-        
+        const classes = await apiFetch('/api/classes');
         const listEl = document.getElementById('classes-list');
         listEl.innerHTML = '';
         
         if (classes.length === 0) {
-            listEl.innerHTML = '<p style="color: var(--text-muted); text-align:center;">No tienes apuntes guardados aún.</p>';
+            listEl.innerHTML = '<p style="color: var(--text-muted); text-align:center; margin-top:2rem;">No tienes apuntes guardados aún.</p>';
             return;
         }
 
         classes.forEach(c => {
             const dateStr = new Date(c.fecha).toLocaleDateString('es-ES', { month: 'short', day: 'numeric', hour: '2-digit', minute:'2-digit' });
-            
             const div = document.createElement('div');
             div.className = 'class-item';
             div.innerHTML = `
@@ -82,57 +149,60 @@ async function loadClasses() {
 
 async function openClassDetail(id) {
     try {
-        const response = await fetch(`/api/classes/${id}`);
-        const clase = await response.json();
-        
+        const clase = await apiFetch(`/api/classes/${id}`);
         currentClass = clase;
         document.getElementById('detail-title').textContent = clase.titulo;
-        
-        // Cargar contenidos
         document.getElementById('content-summary').innerHTML = marked.parse(clase.resumen || '');
         document.getElementById('content-transcription').innerHTML = `<p>${(clase.transcripcion || '').replace(/\n/g, '<br>')}</p>`;
         
-        // Preparar mapa mental (pero no renderizar aún para ahorrar recursos)
         const mapDiv = document.getElementById('content-mindmap');
         let mapText = clase.mapa_mental || 'graph TD\\nA[No se generó mapa]';
-        // Sanitizar el código de Mermaid quitando comillas que suelen romper la sintaxis
         mapText = mapText.replace(/["']/g, '');
         mapDiv.textContent = mapText;
         mapDiv.removeAttribute('data-processed');
         
-        // Cargar Audio
         const audioEl = document.getElementById('class-audio');
-        // Si el audioUrl ya es una URL completa (Cloudinary), la usamos directamente.
-        // Si es una ruta relativa (audios viejos), le ponemos el slash.
-        if (clase.audioUrl.startsWith('http')) {
-            audioEl.src = clase.audioUrl;
-        } else {
-            audioEl.src = '/' + clase.audioUrl;
-        }
+        audioEl.src = clase.audioUrl; 
         
-        // Limpiar chat
         document.getElementById('detail-chat-history').innerHTML = '<div class="chat-msg bot">¡Hola! Soy Gemini. ¿Qué quieres saber sobre esta clase?</div>';
+        document.getElementById('btn-render-map').classList.remove('hidden');
         
         switchView('detail');
-        // Activar tab de resumen por defecto
         document.querySelector('.tab-btn[data-target="tab-summary"]').click();
         
     } catch (error) {
         console.error('Error al cargar la clase:', error);
-        alert('Error al abrir la clase');
     }
 }
 
+// Borrar Clase
+document.getElementById('btn-delete-class').addEventListener('click', async () => {
+    if (!currentClass) return;
+    if (!confirm('¿Estás seguro de que quieres eliminar este apunte?')) return;
+
+    try {
+        await apiFetch(`/api/classes/${currentClass.id}`, { method: 'DELETE' });
+        showModal('Apunte eliminado');
+        switchView('list');
+    } catch (err) {
+        showModal('Error al eliminar');
+    }
+});
+
 // --- Lógica de Grabación ---
+const btnStartRecord = document.getElementById('btn-start-record');
+const btnStopRecord = document.getElementById('btn-stop-record');
+const recordStatus = document.getElementById('record-status');
+const recordTimer = document.getElementById('record-timer');
+const recordLoading = document.getElementById('record-loading');
+
 async function setupAudio() {
     try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         mediaRecorder = new MediaRecorder(stream);
-
         mediaRecorder.ondataavailable = (event) => {
             if (event.data.size > 0) audioChunks.push(event.data);
         };
-
         mediaRecorder.onstop = async () => {
             const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
             audioChunks = [];
@@ -140,8 +210,7 @@ async function setupAudio() {
         };
         return true;
     } catch (error) {
-        console.error('Error al acceder al micrófono:', error);
-        alert('Necesitas permisos de micrófono para grabar.');
+        showModal('Necesitas permisos de micrófono para grabar.');
         return false;
     }
 }
@@ -151,7 +220,6 @@ btnStartRecord.addEventListener('click', async () => {
         const ok = await setupAudio();
         if (!ok) return;
     }
-    
     if (mediaRecorder.state === 'inactive') {
         mediaRecorder.start();
         isRecording = true;
@@ -159,7 +227,6 @@ btnStartRecord.addEventListener('click', async () => {
         btnStopRecord.classList.remove('hidden');
         recordStatus.textContent = 'Grabando...';
         recordStatus.style.color = '#ef4444';
-        
         recordingTime = 0;
         recordTimer.textContent = '00:00';
         recordingInterval = setInterval(() => {
@@ -176,8 +243,6 @@ btnStopRecord.addEventListener('click', () => {
         mediaRecorder.stop();
         isRecording = false;
         clearInterval(recordingInterval);
-        
-        btnStartRecord.classList.add('hidden');
         btnStopRecord.classList.add('hidden');
         recordStatus.textContent = 'Procesando...';
         recordStatus.style.color = 'var(--text-muted)';
@@ -192,66 +257,50 @@ async function uploadAudio(audioBlob) {
     try {
         const response = await fetch('/api/upload-audio', {
             method: 'POST',
+            headers: { 'Authorization': `Bearer ${userToken}` },
             body: formData
         });
-
         const nuevaClase = await response.json();
-        
         if (nuevaClase.error) throw new Error(nuevaClase.error);
 
-        // Terminado
         recordLoading.classList.add('hidden');
         btnStartRecord.classList.remove('hidden');
         recordStatus.textContent = 'Listo para grabar';
-        recordTimer.textContent = '00:00';
-        
-        // Abrir la clase recién grabada
         openClassDetail(nuevaClase.id);
-        
     } catch (error) {
-        console.error('Error:', error);
-        alert('Ocurrió un error al subir el audio.');
+        showModal('Error al procesar el audio: ' + error.message);
         recordLoading.classList.add('hidden');
         btnStartRecord.classList.remove('hidden');
-        recordStatus.textContent = 'Error al grabar. Intenta de nuevo.';
     }
 }
 
-// --- Lógica de Pestañas ---
+// --- Pestañas y Mapa ---
 document.querySelectorAll('.tab-btn').forEach(btn => {
     btn.addEventListener('click', () => {
         document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
         document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
-        
         btn.classList.add('active');
         document.getElementById(btn.getAttribute('data-target')).classList.add('active');
     });
 });
 
-// Renderizar Mapa
 document.getElementById('btn-render-map').addEventListener('click', async () => {
     const mapDiv = document.getElementById('content-mindmap');
     try {
-        await window.mermaid.run({
-            nodes: [mapDiv]
-        });
+        await window.mermaid.run({ nodes: [mapDiv] });
         document.getElementById('btn-render-map').classList.add('hidden');
     } catch (e) {
-        console.error("Mermaid error:", e);
-        alert("El mapa generado por la IA no tiene un formato válido para renderizarse.");
+        showModal("Error al renderizar el mapa mental.");
     }
 });
 
-
-// --- Lógica de Chat IA ---
+// --- Chat IA ---
 const detailBtnSend = document.getElementById('detail-btn-send');
 const detailChatInput = document.getElementById('detail-chat-input');
 const detailChatHistory = document.getElementById('detail-chat-history');
 
 detailBtnSend.addEventListener('click', sendDetailMessage);
-detailChatInput.addEventListener('keypress', (e) => {
-    if (e.key === 'Enter') sendDetailMessage();
-});
+detailChatInput.addEventListener('keypress', (e) => { if (e.key === 'Enter') sendDetailMessage(); });
 
 async function sendDetailMessage() {
     const text = detailChatInput.value.trim();
@@ -261,21 +310,13 @@ async function sendDetailMessage() {
     detailChatInput.value = '';
 
     try {
-        const response = await fetch('/api/chat', {
+        const data = await apiFetch('/api/chat', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                question: text,
-                context: currentClass.resumen // Enviamos el resumen como contexto
-            })
+            body: JSON.stringify({ question: text, context: currentClass.resumen })
         });
-
-        const data = await response.json();
-        if (data.answer) {
-            appendMsg(marked.parseInline(data.answer), 'bot', true);
-        } else {
-            appendMsg('Error al responder.', 'bot');
-        }
+        if (data.answer) appendMsg(marked.parseInline(data.answer), 'bot', true);
+        else appendMsg('Error al responder.', 'bot');
     } catch (error) {
         appendMsg('Error de conexión.', 'bot');
     }
@@ -290,36 +331,29 @@ function appendMsg(text, sender, isHtml = false) {
     detailChatHistory.scrollTop = detailChatHistory.scrollHeight;
 }
 
-// --- Exportar a Word ---
+// Modal Custom
+function showModal(text) {
+    document.getElementById('modal-text').textContent = text;
+    document.getElementById('app-modal').classList.remove('hidden');
+}
+document.getElementById('modal-close').addEventListener('click', () => {
+    document.getElementById('app-modal').classList.add('hidden');
+});
+
+// Exportar Word
 document.getElementById('btn-export-word').addEventListener('click', () => {
     if (!currentClass) return;
-    
-    // Obtener el HTML del resumen
     const summaryHTML = document.getElementById('content-summary').innerHTML;
-    
-    // Crear un documento HTML compatible con MS Word
-    const header = "<html xmlns:o='urn:schemas-microsoft-com:office:office' "+
-            "xmlns:w='urn:schemas-microsoft-com:office:word' "+
-            "xmlns='http://www.w3.org/TR/REC-html40'>"+
-            "<head><meta charset='utf-8'><title>Export HTML to Word</title></head><body>";
+    const header = "<html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'><head><meta charset='utf-8'></head><body>";
     const footer = "</body></html>";
     const sourceHTML = header + `<h1>${currentClass.titulo}</h1>` + summaryHTML + footer;
-    
-    // Crear el Blob
-    const blob = new Blob(['\\ufeff', sourceHTML], {
-        type: 'application/msword'
-    });
-    
-    // Crear link de descarga
+    const blob = new Blob(['\\ufeff', sourceHTML], { type: 'application/msword' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
     link.download = `Apuntes - ${currentClass.titulo}.doc`;
-    
     document.body.appendChild(link);
     link.click();
-    
-    // Limpiar
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
 });

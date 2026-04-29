@@ -89,7 +89,7 @@ IMPORTANTE: El resultado debe ser un JSON válido. NUNCA uses saltos de línea l
         // 4. Guardar en Turso (SQLite Cloud)
         try {
             await client.execute({
-                sql: "INSERT INTO classes (id, fecha, titulo, resumen, transcripcion, mapa_mental, audioUrl) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                sql: "INSERT INTO classes (id, fecha, titulo, resumen, transcripcion, mapa_mental, audioUrl, user_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 args: [
                     audioId,
                     new Date().toISOString(),
@@ -97,7 +97,8 @@ IMPORTANTE: El resultado debe ser un JSON válido. NUNCA uses saltos de línea l
                     aiData.resumen,
                     aiData.transcripcion,
                     aiData.mapa_mental,
-                    audioUrl
+                    audioUrl,
+                    req.user.userId // Guardamos el ID del usuario actual
                 ]
             });
         } catch (dbErr) {
@@ -125,7 +126,10 @@ IMPORTANTE: El resultado debe ser un JSON válido. NUNCA uses saltos de línea l
 
 exports.getClasses = async (req, res) => {
     try {
-        const rs = await client.execute("SELECT id, titulo, fecha FROM classes ORDER BY fecha DESC");
+        const rs = await client.execute({
+            sql: "SELECT id, titulo, fecha FROM classes WHERE user_id = ? ORDER BY fecha DESC",
+            args: [req.user.userId]
+        });
         res.json(rs.rows);
     } catch (error) {
         console.error('Error al obtener clases:', error);
@@ -136,8 +140,8 @@ exports.getClasses = async (req, res) => {
 exports.getClassById = async (req, res) => {
     try {
         const rs = await client.execute({
-            sql: "SELECT * FROM classes WHERE id = ?",
-            args: [req.params.id]
+            sql: "SELECT * FROM classes WHERE id = ? AND user_id = ?",
+            args: [req.params.id, req.user.userId]
         });
         
         if (rs.rows.length === 0) {
@@ -147,6 +151,20 @@ exports.getClassById = async (req, res) => {
     } catch (error) {
         console.error('Error al obtener la clase:', error);
         res.status(500).json({ error: 'Error al obtener la clase de SQL' });
+    }
+};
+
+exports.deleteClass = async (req, res) => {
+    try {
+        const { id } = req.params;
+        await client.execute({
+            sql: "DELETE FROM classes WHERE id = ? AND user_id = ?",
+            args: [id, req.user.userId]
+        });
+        res.json({ message: 'Clase eliminada con éxito' });
+    } catch (error) {
+        console.error('Error al eliminar:', error);
+        res.status(500).json({ error: 'Error al eliminar la clase' });
     }
 };
 

@@ -15,23 +15,44 @@
 </head>
 <body>
     
+    <!-- VISTA DE AUTENTICACIÓN -->
+    <div id="view-auth" class="view active">
+        <div class="auth-card">
+            <h1 class="logo-large">EvoClass</h1>
+            <p class="auth-subtitle">Tus apuntes de IA en la nube</p>
+            
+            <div id="auth-forms">
+                <div id="login-form">
+                    <input type="text" id="login-user" placeholder="Usuario">
+                    <input type="password" id="login-pass" placeholder="Contraseña">
+                    <button class="btn primary btn-full" id="btn-login">Entrar</button>
+                    <p class="auth-switch">¿No tienes cuenta? <a href="#" id="go-register">Regístrate</a></p>
+                </div>
+                
+                <div id="register-form" class="hidden">
+                    <input type="text" id="reg-user" placeholder="Nuevo Usuario">
+                    <input type="password" id="reg-pass" placeholder="Contraseña">
+                    <button class="btn primary btn-full" id="btn-register">Crear Cuenta</button>
+                    <p class="auth-switch">¿Ya tienes cuenta? <a href="#" id="go-login">Inicia Sesión</a></p>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- VISTA PRINCIPAL: Lista de Clases -->
-    <div id="view-list" class="view active">
+    <div id="view-list" class="view">
         <header class="app-header">
             <div class="logo">EvoClass </div>
-            <div class="filter-chips">
-                <button class="chip active">Todo</button>
-                <button class="chip">Reuniones</button>
-                <button class="chip">Clases</button>
-                <button class="chip">Carpetas</button>
-            </div>
             <div class="search-bar">
                 <span>🔍</span> <input type="text" placeholder="Buscar">
             </div>
         </header>
         
         <main class="list-container">
-            <h3 class="section-title">Tus Grabaciones</h3>
+            <div class="section-header">
+                <h3 class="section-title">Tus Grabaciones</h3>
+                <button id="btn-logout" class="btn-text">Cerrar Sesión</button>
+            </div>
             <div id="classes-list" class="classes-list">
                 <!-- Se inyectarán por JS -->
                 <div class="loading-text">Cargando...</div>
@@ -67,8 +88,7 @@
             <div class="header-top">
                 <button class="btn-icon" id="btn-back-detail">←</button>
                 <div class="header-actions">
-                    <button class="btn-icon">📤</button>
-                    <button class="btn-icon">⋯</button>
+                    <button class="btn-icon" id="btn-delete-class" title="Eliminar">🗑️</button>
                 </div>
             </div>
             <h2 id="detail-title">Cargando...</h2>
@@ -118,11 +138,18 @@
         </div>
     </div>
 
+    <!-- MODAL DE MENSAJES -->
+    <div id="app-modal" class="modal-overlay hidden">
+        <div class="modal-content">
+            <p id="modal-text"></p>
+            <button class="btn primary" id="modal-close">Aceptar</button>
+        </div>
+    </div>
+
     <!-- NAVEGACIÓN INFERIOR -->
-    <nav class="bottom-nav">
+    <nav class="bottom-nav hidden" id="main-nav">
         <button class="nav-item active" id="nav-home">🏠</button>
         <button class="nav-fab" id="nav-record">+</button>
-        <button class="nav-item">👤</button>
     </nav>
 
     <script src="js/app.js"></script>

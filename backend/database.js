@@ -9,6 +9,16 @@ const client = createClient({
 });
 
 async function initDB() {
+  // Tabla de Usuarios
+  await client.execute(`
+    CREATE TABLE IF NOT EXISTS users (
+      id TEXT PRIMARY KEY,
+      username TEXT UNIQUE,
+      password TEXT
+    )
+  `);
+
+  // Tabla de Clases (añadimos user_id)
   await client.execute(`
     CREATE TABLE IF NOT EXISTS classes (
       id TEXT PRIMARY KEY,
@@ -17,7 +27,9 @@ async function initDB() {
       resumen TEXT,
       transcripcion TEXT,
       mapa_mental TEXT,
-      audioUrl TEXT
+      audioUrl TEXT,
+      user_id TEXT,
+      FOREIGN KEY(user_id) REFERENCES users(id)
     )
   `);
 }
