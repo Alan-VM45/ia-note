@@ -374,7 +374,7 @@ audio::-webkit-media-controls-time-remaining-display { color: white; }
 }
 
 /* --- NUEVOS ESTILOS: Auth y Modal --- */
-#view-auth {
+#view-auth.active {
     display: flex;
     align-items: center;
     justify-content: center;
