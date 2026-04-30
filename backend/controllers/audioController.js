@@ -38,12 +38,26 @@ exports.processAudio = async (req, res) => {
         const audioId = Date.now().toString();
 
         // 2. Subir el archivo de audio a Gemini para procesamiento (usando el archivo temporal local)
-        const uploadResult = await ai.files.upload({
+        let uploadResult = await ai.files.upload({
             file: tempFilePath,
             config: {
                 mimeType: req.file.mimetype,
             }
         });
+
+        // Esperar a que Gemini procese el archivo (necesario para audios largos)
+        let file = await ai.files.get(uploadResult.name);
+        let retryCount = 0;
+        while (file.state === 'PROCESSING' && retryCount < 20) {
+            console.log('Gemini sigue procesando el archivo...');
+            await new Promise(resolve => setTimeout(resolve, 2000));
+            file = await ai.files.get(uploadResult.name);
+            retryCount++;
+        }
+
+        if (file.state !== 'ACTIVE') {
+            throw new Error('El archivo de audio no pudo ser procesado por Gemini (Estado: ' + file.state + ')');
+        }
 
         // 3. Pedir a Gemini estructura JSON
         const prompt = `Eres un asistente de estudio experto.
@@ -83,7 +97,13 @@ IMPORTANTE: El resultado debe ser un JSON válido. NUNCA uses saltos de línea l
             aiData = JSON.parse(cleanedText);
         } catch (e) {
             console.error("Error parseando la respuesta de Gemini:", response.text);
-            return res.status(500).json({ error: 'La IA no devolvió un formato válido.' });
+            // Si falla el parseo, intentamos limpiar caracteres de control
+            try {
+                let textFix = response.text.replace(/[\u0000-\u001F\u007F-\u009F]/g, "");
+                aiData = JSON.parse(textFix);
+            } catch (e2) {
+                return res.status(500).json({ error: 'La IA no devolvió un formato válido.' });
+            }
         }
 
         // 4. Guardar en Turso (SQLite Cloud)
@@ -98,11 +118,13 @@ IMPORTANTE: El resultado debe ser un JSON válido. NUNCA uses saltos de línea l
                     aiData.transcripcion,
                     aiData.mapa_mental,
                     audioUrl,
-                    req.user.userId // Guardamos el ID del usuario actual
+                    req.user.userId 
                 ]
             });
         } catch (dbErr) {
             console.error('Error guardando en Turso:', dbErr);
+            // Intentamos loguear más info
+            console.error('ID de usuario:', req.user.userId);
             return res.status(500).json({ error: 'Error al guardar en la base de datos SQL.' });
         }
 

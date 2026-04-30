@@ -18,7 +18,7 @@ async function initDB() {
     )
   `);
 
-  // Tabla de Clases (añadimos user_id)
+  // Tabla de Clases
   await client.execute(`
     CREATE TABLE IF NOT EXISTS classes (
       id TEXT PRIMARY KEY,
@@ -32,6 +32,14 @@ async function initDB() {
       FOREIGN KEY(user_id) REFERENCES users(id)
     )
   `);
+
+  // Migración manual: Si la columna user_id no existe, la añadimos
+  try {
+    await client.execute("ALTER TABLE classes ADD COLUMN user_id TEXT");
+    console.log("Columna user_id añadida con éxito");
+  } catch (e) {
+    // Si ya existe, dará error, lo cual está bien
+  }
 }
 
 module.exports = { client, initDB };
