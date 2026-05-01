@@ -42,147 +42,109 @@ exports.processAudio = async (req, res) => {
 
         const audioUrl = cloudinaryResult.secure_url;
         console.log('Subida a Cloudinary exitosa:', audioUrl);
-        audioId = Date.now().toString();
+        const audioId = Date.now().toString();
 
-        // 2. Subir el archivo de audio a Gemini para procesamiento (usando el archivo temporal local)
-        console.log('Subiendo archivo a Gemini (Files API)...');
-        let uploadResult;
-        try {
-            uploadResult = await ai.files.upload({
-                file: tempFilePath,
-                config: {
-                    mimeType: req.file.mimetype,
-                }
-            });
-            console.log('Archivo subido a Gemini. URI:', uploadResult.uri);
-        } catch (geminiUploadErr) {
-            console.error('Error subiendo a Gemini:', geminiUploadErr);
-            throw new Error('Error al subir el audio a la API de archivos de Gemini.');
-        }
-
-        // Esperar a que Gemini procese el archivo (necesario para audios largos)
-        let file = await ai.files.get({ name: uploadResult.name });
-        let retryCount = 0;
-        while (file.state === 'PROCESSING' && retryCount < 25) {
-            console.log('Gemini sigue procesando el archivo...');
-            await new Promise(resolve => setTimeout(resolve, 1500));
-            file = await ai.files.get({ name: uploadResult.name });
-            retryCount++;
-        }
-
-        if (file.state !== 'ACTIVE') {
-            throw new Error('El archivo de audio no pudo ser procesado por Gemini (Estado: ' + file.state + ')');
-        }
-        console.log('Archivo en Gemini está ACTIVE.');
-
-        // 3. Pedir a Gemini estructura JSON
-        console.log('Generando contenido con Gemini...');
-        const prompt = `Eres un asistente de estudio experto.
-A continuación te paso el audio de una clase. 
-Necesito que devuelvas la información ESTRICTAMENTE en formato JSON con la siguiente estructura exacta:
-{
-  "titulo": "Un título corto y descriptivo de la clase",
-  "resumen": "Los apuntes principales en formato Markdown (usa títulos, viñetas, negritas para resaltar conceptos clave).",
-  "transcripcion": "La transcripción completa de todo lo que se dijo en el audio, separado por párrafos.",
-  "mapa_mental": "Código en sintaxis Mermaid.js (ej. graph TD\\n A[Texto]-->B(Texto)...). REGLAS CRÍTICAS PARA MERMAID: NO uses comillas (\"), ni apóstrofes ('), ni saltos de línea dentro de los textos de los nodos (corchetes/paréntesis). Mantén los textos de los nodos muy simples y cortos. NO envuelvas el código en bloques markdown."
-}
-IMPORTANTE: El resultado debe ser un JSON válido. NUNCA uses saltos de línea literales (Enter) dentro de los textos. Si necesitas un salto de línea, utiliza SIEMPRE el texto "\\n" (barra invertida y n). Asegúrate de escapar las comillas internas. No devuelvas NADA más que el objeto JSON válido.`;
-
-        const response = await ai.models.generateContent({
-            model: 'gemini-flash-latest',
-            config: {
-                responseMimeType: "application/json",
-            },
-            contents: [
-                {
-                    role: 'user',
-                    parts: [
-                        {
-                            fileData: {
-                                fileUri: uploadResult.uri,
-                                mimeType: uploadResult.mimeType
-                            }
-                        },
-                        { text: prompt }
-                    ]
-                }
+        // 2. Crear registro inicial en "procesando" y responder al cliente
+        console.log('Creando registro inicial en la DB...');
+        await client.execute({
+            sql: "INSERT INTO classes (id, fecha, titulo, status, audioUrl, user_id) VALUES (?, ?, ?, ?, ?, ?)",
+            args: [
+                audioId,
+                new Date().toISOString(),
+                'Procesando audio...',
+                'procesando',
+                audioUrl,
+                req.user.userId
             ]
         });
 
-        let aiData;
-        console.log('Respuesta de Gemini recibida. Intentando parsear JSON...');
-        try {
-            let cleanedText = response.text.trim();
-            if (cleanedText.startsWith('```json')) cleanedText = cleanedText.substring(7);
-            if (cleanedText.startsWith('```')) cleanedText = cleanedText.substring(3);
-            if (cleanedText.endsWith('```')) cleanedText = cleanedText.substring(0, cleanedText.length - 3);
-            cleanedText = cleanedText.trim();
-            aiData = JSON.parse(cleanedText);
-        } catch (e) {
-            console.error("Error parseando la respuesta de Gemini:", response.text);
-            // Si falla el parseo, intentamos limpiar caracteres de control
-            try {
-                let textFix = response.text.replace(/[\u0000-\u001F\u007F-\u009F]/g, "");
-                aiData = JSON.parse(textFix);
-            } catch (e2) {
-                return res.status(500).json({ error: 'La IA no devolvió un formato válido.' });
-            }
-        }
-
-        // 4. Guardar en Turso (SQLite Cloud)
-        console.log('Guardando en base de datos Turso...');
-        try {
-            await client.execute({
-                sql: "INSERT INTO classes (id, fecha, titulo, resumen, transcripcion, mapa_mental, audioUrl, user_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                args: [
-                    audioId,
-                    new Date().toISOString(),
-                    aiData.titulo,
-                    aiData.resumen,
-                    aiData.transcripcion,
-                    aiData.mapa_mental,
-                    audioUrl,
-                    req.user.userId 
-                ]
-            });
-        } catch (dbErr) {
-            console.error('Error guardando en Turso:', dbErr);
-            // Intentamos loguear más info
-            console.error('ID de usuario:', req.user.userId);
-            return res.status(500).json({ error: 'Error al guardar en la base de datos SQL.' });
-        }
-
-        console.log('Proceso completado con éxito para audio:', audioId);
-
+        // Respondemos inmediatamente al frontend para evitar el timeout de Render
         res.json({
             id: audioId,
-            fecha: new Date().toISOString(),
-            audioUrl: audioUrl,
-            ...aiData
+            status: 'procesando',
+            message: 'Audio recibido y en proceso de análisis.'
         });
 
-    } catch (error) {
-        console.error('ERROR DETALLADO EN PROCESSAUDIO:', error);
-        res.status(500).json({ 
-            error: 'Ocurrió un error al procesar el audio con IA.',
-            details: error.message 
-        });
-    } finally {
-        if (tempFilePath && fs.existsSync(tempFilePath)) {
+        // 3. Iniciar procesamiento pesado en "segundo plano" (sin await para el res)
+        // Usamos una función autoejecutada para que los errores no afecten al hilo principal
+        (async () => {
             try {
-                console.log('Eliminando archivo temporal en finally:', tempFilePath);
-                fs.unlinkSync(tempFilePath);
-            } catch (err) {
-                console.error('Error al eliminar archivo temporal:', err);
+                console.log(`[${audioId}] Iniciando proceso Gemini en background...`);
+                
+                // Subir a Gemini
+                const uploadResult = await ai.files.upload({
+                    file: tempFilePath,
+                    config: { mimeType: req.file.mimetype }
+                });
+
+                // Esperar procesamiento
+                let file = await ai.files.get({ name: uploadResult.name });
+                let retryCount = 0;
+                while (file.state === 'PROCESSING' && retryCount < 40) {
+                    await new Promise(r => setTimeout(r, 2000));
+                    file = await ai.files.get({ name: uploadResult.name });
+                    retryCount++;
+                }
+
+                if (file.state !== 'ACTIVE') throw new Error('Gemini falló: ' + file.state);
+
+                // Generar Contenido
+                const prompt = `Eres un asistente de estudio experto. Analiza el audio y responde ESTRICTAMENTE en JSON:
+                {
+                  "titulo": "Título corto",
+                  "resumen": "Apuntes en Markdown",
+                  "transcripcion": "Texto completo",
+                  "mapa_mental": "Código Mermaid.js simple"
+                }`;
+
+                const response = await ai.models.generateContent({
+                    model: 'gemini-flash-latest',
+                    config: { responseMimeType: "application/json" },
+                    contents: [{
+                        role: 'user',
+                        parts: [
+                            { fileData: { fileUri: uploadResult.uri, mimeType: uploadResult.mimeType } },
+                            { text: prompt }
+                        ]
+                    }]
+                });
+
+                let aiData = JSON.parse(response.text);
+
+                // 4. Actualizar registro final
+                await client.execute({
+                    sql: "UPDATE classes SET titulo = ?, resumen = ?, transcripcion = ?, mapa_mental = ?, status = 'completado' WHERE id = ?",
+                    args: [aiData.titulo, aiData.resumen, aiData.transcripcion, aiData.mapa_mental, audioId]
+                });
+                console.log(`[${audioId}] Procesamiento completado con éxito.`);
+
+            } catch (bgError) {
+                console.error(`[${audioId}] ERROR EN BACKGROUND:`, bgError);
+                await client.execute({
+                    sql: "UPDATE classes SET status = 'error', error_message = ? WHERE id = ?",
+                    args: [bgError.message, audioId]
+                });
+            } finally {
+                // Limpiar archivo temporal al final del proceso de fondo
+                if (fs.existsSync(tempFilePath)) {
+                    fs.unlinkSync(tempFilePath);
+                    console.log(`[${audioId}] Archivo temporal eliminado.`);
+                }
             }
-        }
+        })();
+
+        return; // Fin de la función principal (la respuesta ya se envió)
+
+    } catch (error) {
+        console.error('ERROR EN PROCESSAUDIO (INICIAL):', error);
+        res.status(500).json({ error: 'Error al iniciar el procesamiento.' });
     }
 };
 
 exports.getClasses = async (req, res) => {
     try {
         const rs = await client.execute({
-            sql: "SELECT id, titulo, fecha FROM classes WHERE user_id = ? ORDER BY fecha DESC",
+            sql: "SELECT id, titulo, fecha, status FROM classes WHERE user_id = ? ORDER BY fecha DESC",
             args: [req.user.userId]
         });
         res.json(rs.rows);

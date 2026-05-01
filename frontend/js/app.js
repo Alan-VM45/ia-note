@@ -145,11 +145,19 @@ async function loadClasses() {
         classes.forEach(c => {
             const dateStr = new Date(c.fecha).toLocaleDateString('es-ES', { month: 'short', day: 'numeric', hour: '2-digit', minute:'2-digit' });
             const div = document.createElement('div');
-            div.className = 'class-item';
+            div.className = `class-item ${c.status || 'completado'}`;
+            
+            let statusBadge = '';
+            if (c.status === 'procesando') statusBadge = '<span class="status-badge processing">⏳ Procesando...</span>';
+            if (c.status === 'error') statusBadge = '<span class="status-badge error">❌ Error</span>';
+
             div.innerHTML = `
                 <div class="class-info">
                     <h4>${c.titulo}</h4>
-                    <span class="class-meta">${dateStr}</span>
+                    <div class="class-meta">
+                        <span>${dateStr}</span>
+                        ${statusBadge}
+                    </div>
                 </div>
                 <div class="class-icon">📝</div>
             `;
@@ -165,9 +173,43 @@ async function openClassDetail(id) {
     try {
         const clase = await apiFetch(`/api/classes/${id}`);
         currentClass = clase;
+
+        if (clase.status === 'procesando') {
+            document.getElementById('detail-title').textContent = "Procesando audio...";
+            document.getElementById('content-summary').innerHTML = `
+                <div class="loading-container">
+                    <div class="spinner"></div>
+                    <p>Gemini está analizando la clase. Esto puede tardar unos minutos para audios largos.</p>
+                    <p style="font-size: 0.8rem; color: var(--text-muted);">No hace falta que te quedes en esta pantalla, te avisaremos cuando termine.</p>
+                </div>`;
+            document.getElementById('content-transcription').innerHTML = "";
+            document.getElementById('btn-export-word').classList.add('hidden');
+            document.getElementById('btn-render-map').classList.add('hidden');
+            document.getElementById('detail-chat-input').disabled = true;
+            
+            // Reintentar cargar después de 10 segundos si estamos viendo esta nota
+            setTimeout(() => {
+                if (currentClass && currentClass.id === id && viewDetail.classList.contains('active')) {
+                    openClassDetail(id);
+                }
+            }, 10000);
+
+            switchView('detail');
+            return;
+        }
+
+        if (clase.status === 'error') {
+            document.getElementById('detail-title').textContent = "Error de Procesamiento";
+            document.getElementById('content-summary').innerHTML = `<p style="color: #ef4444;">Error: ${clase.error_message || 'Desconocido'}</p>`;
+            switchView('detail');
+            return;
+        }
+
         document.getElementById('detail-title').textContent = clase.titulo;
         document.getElementById('content-summary').innerHTML = marked.parse(clase.resumen || '');
         document.getElementById('content-transcription').innerHTML = `<p>${(clase.transcripcion || '').replace(/\n/g, '<br>')}</p>`;
+        document.getElementById('btn-export-word').classList.remove('hidden');
+        document.getElementById('detail-chat-input').disabled = false;
         
         const mapDiv = document.getElementById('content-mindmap');
         let mapText = clase.mapa_mental || 'graph TD\\nA[No se generó mapa]';

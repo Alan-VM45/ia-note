@@ -33,13 +33,20 @@ async function initDB() {
     )
   `);
 
-  // Migración manual: Si la columna user_id no existe, la añadimos
+  // Migración manual: Añadimos user_id, status y error_message si no existen
   try {
     await client.execute("ALTER TABLE classes ADD COLUMN user_id TEXT");
-    console.log("Columna user_id añadida con éxito");
-  } catch (e) {
-    // Si ya existe, dará error, lo cual está bien
-  }
+  } catch (e) {}
+
+  try {
+    await client.execute("ALTER TABLE classes ADD COLUMN status TEXT DEFAULT 'completado'");
+    console.log("Columna status añadida con éxito");
+  } catch (e) {}
+
+  try {
+    await client.execute("ALTER TABLE classes ADD COLUMN error_message TEXT");
+    console.log("Columna error_message añadida con éxito");
+  } catch (e) {}
 }
 
 module.exports = { client, initDB };
