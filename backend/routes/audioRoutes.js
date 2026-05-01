@@ -6,7 +6,10 @@ const authController = require('../controllers/authController');
 const path = require('path');
 
 // Configuración de multer para guardar archivos temporalmente
-const upload = multer({ dest: path.join(__dirname, '../../uploads/') });
+const upload = multer({ 
+    dest: path.join(__dirname, '../../uploads/'),
+    limits: { fileSize: 100 * 1024 * 1024 } // Límite de 100MB
+});
 
 // Rutas de Auth
 router.post('/register', authController.register);

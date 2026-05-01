@@ -255,12 +255,28 @@ const recordLoading = document.getElementById('record-loading');
 async function setupAudio() {
     try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        mediaRecorder = new MediaRecorder(stream);
+        
+        // Optimización: Usar un bitrate bajo (32kbps es excelente para voz) 
+        // Esto reduce el peso del archivo casi 10 veces sin perder calidad para la IA.
+        const options = {
+            audioBitsPerSecond: 32000
+        };
+
+        // Intentar formatos más eficientes según el navegador (especialmente para móviles)
+        if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
+            options.mimeType = 'audio/webm;codecs=opus';
+        } else if (MediaRecorder.isTypeSupported('audio/mp4')) {
+            options.mimeType = 'audio/mp4';
+        }
+
+        mediaRecorder = new MediaRecorder(stream, options);
+        
         mediaRecorder.ondataavailable = (event) => {
             if (event.data.size > 0) audioChunks.push(event.data);
         };
         mediaRecorder.onstop = async () => {
-            const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+            const mimeType = mediaRecorder.mimeType || 'audio/webm';
+            const audioBlob = new Blob(audioChunks, { type: mimeType });
             audioChunks = [];
             await uploadAudio(audioBlob);
         };
