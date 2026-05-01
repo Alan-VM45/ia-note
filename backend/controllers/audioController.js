@@ -42,7 +42,7 @@ exports.processAudio = async (req, res) => {
 
         const audioUrl = cloudinaryResult.secure_url;
         console.log('Subida a Cloudinary exitosa:', audioUrl);
-        const audioId = Date.now().toString();
+        audioId = Date.now().toString();
 
         // 2. Subir el archivo de audio a Gemini para procesamiento (usando el archivo temporal local)
         console.log('Subiendo archivo a Gemini (Files API)...');
