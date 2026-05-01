@@ -49,7 +49,10 @@ async function fetchVersion() {
     try {
         const response = await fetch('/api/version');
         const data = await response.json();
-        document.querySelectorAll('.app-version').forEach(el => el.textContent = data.version);
+        document.querySelectorAll('.app-version').forEach(el => {
+            el.textContent = data.version;
+            console.log('Versión actualizada en UI:', data.version);
+        });
     } catch (err) {
         console.error('Error fetching version:', err);
     }
