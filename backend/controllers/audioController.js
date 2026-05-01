@@ -42,7 +42,7 @@ exports.processAudio = async (req, res) => {
 
         const audioUrl = cloudinaryResult.secure_url;
         console.log('Subida a Cloudinary exitosa:', audioUrl);
-        const audioId = Date.now().toString();
+        audioId = Date.now().toString();
 
         // 2. Crear registro inicial en "procesando" y responder al cliente
         console.log('Creando registro inicial en la DB...');
