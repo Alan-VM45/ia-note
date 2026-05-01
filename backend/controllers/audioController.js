@@ -109,7 +109,21 @@ exports.processAudio = async (req, res) => {
                     }]
                 });
 
-                let aiData = JSON.parse(response.text);
+                let cleanedText = response.text.trim();
+                // Eliminar posibles bloques de código markdown que Gemini a veces añade a pesar de pedirle JSON
+                if (cleanedText.startsWith('```')) {
+                    cleanedText = cleanedText.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
+                }
+                
+                let aiData;
+                try {
+                    aiData = JSON.parse(cleanedText);
+                } catch (parseError) {
+                    console.error("Error en primer intento de parseo:", parseError);
+                    // Segundo intento: limpiar caracteres de control invisibles
+                    const secondAttemptText = cleanedText.replace(/[\u0000-\u001F\u007F-\u009F]/g, "");
+                    aiData = JSON.parse(secondAttemptText);
+                }
 
                 // 4. Actualizar registro final
                 await client.execute({
