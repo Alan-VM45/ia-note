@@ -20,6 +20,7 @@ exports.processAudio = async (req, res) => {
         }
 
         const tempFilePath = req.file.path;
+        let audioId; // Definir fuera para que esté disponible en el catch si es necesario
         console.log('Audio recibido:', {
             path: tempFilePath,
             size: req.file.size,
@@ -60,12 +61,12 @@ exports.processAudio = async (req, res) => {
         }
 
         // Esperar a que Gemini procese el archivo (necesario para audios largos)
-        let file = await ai.files.get(uploadResult.name);
+        let file = await ai.files.get({ name: uploadResult.name });
         let retryCount = 0;
         while (file.state === 'PROCESSING' && retryCount < 25) {
             console.log('Gemini sigue procesando el archivo...');
             await new Promise(resolve => setTimeout(resolve, 1500));
-            file = await ai.files.get(uploadResult.name);
+            file = await ai.files.get({ name: uploadResult.name });
             retryCount++;
         }
 
