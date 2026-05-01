@@ -37,12 +37,23 @@ document.getElementById('go-login').addEventListener('click', (e) => {
 
 // Inicialización
 document.addEventListener('DOMContentLoaded', () => {
+    fetchVersion();
     if (userToken) {
         showApp();
     } else {
         showAuth();
     }
 });
+
+async function fetchVersion() {
+    try {
+        const response = await fetch('/api/version');
+        const data = await response.json();
+        document.querySelectorAll('.app-version').forEach(el => el.textContent = data.version);
+    } catch (err) {
+        console.error('Error fetching version:', err);
+    }
+}
 
 // --- Lógica de Autenticación ---
 async function handleAuth(type) {

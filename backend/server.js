@@ -20,6 +20,12 @@ app.use(express.static(path.join(__dirname, '../frontend')));
 const audioRoutes = require('./routes/audioRoutes');
 app.use('/api', audioRoutes);
 
+// Endpoint para obtener la versión de package.json
+const pkg = require('../package.json');
+app.get('/api/version', (req, res) => {
+    res.json({ version: pkg.version });
+});
+
 // Iniciar base de datos y luego el servidor
 initDB().then(() => {
     app.listen(PORT, () => {
