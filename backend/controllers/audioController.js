@@ -20,9 +20,14 @@ exports.processAudio = async (req, res) => {
         }
 
         const tempFilePath = req.file.path;
-        console.log('Audio recibido, procesando con Gemini...', tempFilePath);
+        console.log('Audio recibido:', {
+            path: tempFilePath,
+            size: req.file.size,
+            mimetype: req.file.mimetype
+        });
 
         // 1. Subir a Cloudinary para almacenamiento permanente
+        console.log('Iniciando subida a Cloudinary...');
         let cloudinaryResult;
         try {
             cloudinaryResult = await cloudinary.uploader.upload(tempFilePath, {
@@ -35,15 +40,24 @@ exports.processAudio = async (req, res) => {
         }
 
         const audioUrl = cloudinaryResult.secure_url;
+        console.log('Subida a Cloudinary exitosa:', audioUrl);
         const audioId = Date.now().toString();
 
         // 2. Subir el archivo de audio a Gemini para procesamiento (usando el archivo temporal local)
-        let uploadResult = await ai.files.upload({
-            file: tempFilePath,
-            config: {
-                mimeType: req.file.mimetype,
-            }
-        });
+        console.log('Subiendo archivo a Gemini (Files API)...');
+        let uploadResult;
+        try {
+            uploadResult = await ai.files.upload({
+                file: tempFilePath,
+                config: {
+                    mimeType: req.file.mimetype,
+                }
+            });
+            console.log('Archivo subido a Gemini. URI:', uploadResult.uri);
+        } catch (geminiUploadErr) {
+            console.error('Error subiendo a Gemini:', geminiUploadErr);
+            throw new Error('Error al subir el audio a la API de archivos de Gemini.');
+        }
 
         // Esperar a que Gemini procese el archivo (necesario para audios largos)
         let file = await ai.files.get(uploadResult.name);
@@ -58,8 +72,10 @@ exports.processAudio = async (req, res) => {
         if (file.state !== 'ACTIVE') {
             throw new Error('El archivo de audio no pudo ser procesado por Gemini (Estado: ' + file.state + ')');
         }
+        console.log('Archivo en Gemini está ACTIVE.');
 
         // 3. Pedir a Gemini estructura JSON
+        console.log('Generando contenido con Gemini...');
         const prompt = `Eres un asistente de estudio experto.
 A continuación te paso el audio de una clase. 
 Necesito que devuelvas la información ESTRICTAMENTE en formato JSON con la siguiente estructura exacta:
@@ -72,22 +88,28 @@ Necesito que devuelvas la información ESTRICTAMENTE en formato JSON con la sigu
 IMPORTANTE: El resultado debe ser un JSON válido. NUNCA uses saltos de línea literales (Enter) dentro de los textos. Si necesitas un salto de línea, utiliza SIEMPRE el texto "\\n" (barra invertida y n). Asegúrate de escapar las comillas internas. No devuelvas NADA más que el objeto JSON válido.`;
 
         const response = await ai.models.generateContent({
-            model: 'gemini-1.5-flash',
+            model: 'gemini-flash-latest',
             config: {
                 responseMimeType: "application/json",
             },
             contents: [
                 {
-                    fileData: {
-                        fileUri: uploadResult.uri,
-                        mimeType: uploadResult.mimeType
-                    }
-                },
-                prompt
+                    role: 'user',
+                    parts: [
+                        {
+                            fileData: {
+                                fileUri: uploadResult.uri,
+                                mimeType: uploadResult.mimeType
+                            }
+                        },
+                        { text: prompt }
+                    ]
+                }
             ]
         });
 
         let aiData;
+        console.log('Respuesta de Gemini recibida. Intentando parsear JSON...');
         try {
             let cleanedText = response.text.trim();
             if (cleanedText.startsWith('```json')) cleanedText = cleanedText.substring(7);
@@ -107,6 +129,7 @@ IMPORTANTE: El resultado debe ser un JSON válido. NUNCA uses saltos de línea l
         }
 
         // 4. Guardar en Turso (SQLite Cloud)
+        console.log('Guardando en base de datos Turso...');
         try {
             await client.execute({
                 sql: "INSERT INTO classes (id, fecha, titulo, resumen, transcripcion, mapa_mental, audioUrl, user_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
@@ -128,10 +151,7 @@ IMPORTANTE: El resultado debe ser un JSON válido. NUNCA uses saltos de línea l
             return res.status(500).json({ error: 'Error al guardar en la base de datos SQL.' });
         }
 
-        // 5. Limpiar archivo temporal
-        if (fs.existsSync(tempFilePath)) {
-            fs.unlinkSync(tempFilePath);
-        }
+        console.log('Proceso completado con éxito para audio:', audioId);
 
         res.json({
             id: audioId,
@@ -141,8 +161,20 @@ IMPORTANTE: El resultado debe ser un JSON válido. NUNCA uses saltos de línea l
         });
 
     } catch (error) {
-        console.error('Error procesando el audio:', error);
-        res.status(500).json({ error: 'Ocurrió un error al procesar el audio con IA.' });
+        console.error('ERROR DETALLADO EN PROCESSAUDIO:', error);
+        res.status(500).json({ 
+            error: 'Ocurrió un error al procesar el audio con IA.',
+            details: error.message 
+        });
+    } finally {
+        if (tempFilePath && fs.existsSync(tempFilePath)) {
+            try {
+                console.log('Eliminando archivo temporal en finally:', tempFilePath);
+                fs.unlinkSync(tempFilePath);
+            } catch (err) {
+                console.error('Error al eliminar archivo temporal:', err);
+            }
+        }
     }
 };
 
@@ -208,8 +240,11 @@ PREGUNTA DEL ALUMNO:
 ${question}`;
 
         const response = await ai.models.generateContent({
-            model: 'gemini-1.5-flash',
-            contents: prompt
+            model: 'gemini-flash-latest',
+            contents: [{
+                role: 'user',
+                parts: [{ text: prompt }]
+            }]
         });
 
         res.json({ answer: response.text });
