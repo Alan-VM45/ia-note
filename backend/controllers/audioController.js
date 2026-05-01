@@ -48,9 +48,9 @@ exports.processAudio = async (req, res) => {
         // Esperar a que Gemini procese el archivo (necesario para audios largos)
         let file = await ai.files.get(uploadResult.name);
         let retryCount = 0;
-        while (file.state === 'PROCESSING' && retryCount < 20) {
+        while (file.state === 'PROCESSING' && retryCount < 25) {
             console.log('Gemini sigue procesando el archivo...');
-            await new Promise(resolve => setTimeout(resolve, 2000));
+            await new Promise(resolve => setTimeout(resolve, 1500));
             file = await ai.files.get(uploadResult.name);
             retryCount++;
         }
@@ -72,7 +72,7 @@ Necesito que devuelvas la información ESTRICTAMENTE en formato JSON con la sigu
 IMPORTANTE: El resultado debe ser un JSON válido. NUNCA uses saltos de línea literales (Enter) dentro de los textos. Si necesitas un salto de línea, utiliza SIEMPRE el texto "\\n" (barra invertida y n). Asegúrate de escapar las comillas internas. No devuelvas NADA más que el objeto JSON válido.`;
 
         const response = await ai.models.generateContent({
-            model: 'gemini-2.5-flash',
+            model: 'gemini-1.5-flash',
             config: {
                 responseMimeType: "application/json",
             },
@@ -208,7 +208,7 @@ PREGUNTA DEL ALUMNO:
 ${question}`;
 
         const response = await ai.models.generateContent({
-            model: 'gemini-2.5-flash',
+            model: 'gemini-1.5-flash',
             contents: prompt
         });
 
