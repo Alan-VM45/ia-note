@@ -87,6 +87,20 @@ exports.processAudio = async (req, res) => {
                                     req.file.originalname.endsWith('.pptx');
 
                 let aiResponse;
+                const callGeminiWithRetry = async (payload, retries = 3) => {
+                    for (let i = 0; i < retries; i++) {
+                        try {
+                            return await ai.models.generateContent(payload);
+                        } catch (err) {
+                            if (err.message.includes('503') || err.message.includes('high demand')) {
+                                console.log(`[${audioId}] Gemini ocupado (503), reintentando en ${2000 * (i + 1)}ms...`);
+                                await new Promise(r => setTimeout(r, 2000 * (i + 1)));
+                                continue;
+                            }
+                            throw err;
+                        }
+                    }
+                };
 
                 if (isOfficeFile) {
                     console.log(`[${audioId}] Detectado archivo de Office, extrayendo texto...`);
@@ -105,7 +119,7 @@ exports.processAudio = async (req, res) => {
                     CONTENIDO DEL DOCUMENTO:
                     ${extractedText}`;
 
-                    aiResponse = await ai.models.generateContent({
+                    aiResponse = await callGeminiWithRetry({
                         model: 'gemini-flash-latest',
                         config: { responseMimeType: "application/json" },
                         contents: [{ role: 'user', parts: [{ text: prompt }] }]
@@ -137,7 +151,7 @@ exports.processAudio = async (req, res) => {
                       "mapa_mental": "Esquema Mermaid.js (ej: graph TD\\nA-->B)"
                     }`;
 
-                    aiResponse = await ai.models.generateContent({
+                    aiResponse = await callGeminiWithRetry({
                         model: 'gemini-flash-latest',
                         config: { responseMimeType: "application/json" },
                         contents: [{
