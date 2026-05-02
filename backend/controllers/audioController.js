@@ -114,7 +114,7 @@ exports.processAudio = async (req, res) => {
                 }`;
 
                 const response = await ai.models.generateContent({
-                    model: 'gemini-1.5-flash', // Usamos la versión más reciente y capaz
+                    model: 'gemini-1.5-flash-latest', // Cambiado a -latest para compatibilidad
                     config: { responseMimeType: "application/json" },
                     contents: [{
                         role: 'user',
