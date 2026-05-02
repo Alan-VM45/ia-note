@@ -6,12 +6,17 @@ const cloudinary = require('cloudinary').v2;
 
 const ai = new GoogleGenAI(process.env.GEMINI_API_KEY || '');
 
-// Configurar Cloudinary
 cloudinary.config({
     cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
     api_key: process.env.CLOUDINARY_API_KEY,
     api_secret: process.env.CLOUDINARY_API_SECRET
 });
+
+const getCloudinaryResourceType = (mimetype) => {
+    if (mimetype.startsWith('image/')) return 'image';
+    if (mimetype.startsWith('audio/') || mimetype.startsWith('video/')) return 'video';
+    return 'raw';
+};
 
 exports.processAudio = async (req, res) => {
     try {
@@ -30,14 +35,16 @@ exports.processAudio = async (req, res) => {
         // 1. Subir a Cloudinary para almacenamiento permanente
         console.log('Iniciando subida a Cloudinary...');
         let cloudinaryResult;
+        const resourceType = getCloudinaryResourceType(req.file.mimetype);
+        
         try {
             cloudinaryResult = await cloudinary.uploader.upload(tempFilePath, {
-                resource_type: 'video', // para archivos de audio
+                resource_type: resourceType,
                 folder: 'ia-notes'
             });
         } catch (cloudErr) {
             console.error('Error subiendo a Cloudinary:', cloudErr);
-            return res.status(500).json({ error: 'Error al guardar el audio en la nube.' });
+            return res.status(500).json({ error: 'Error al guardar el archivo en la nube.' });
         }
 
         const audioUrl = cloudinaryResult.secure_url;
@@ -51,7 +58,7 @@ exports.processAudio = async (req, res) => {
             args: [
                 audioId,
                 new Date().toISOString(),
-                'Procesando audio...',
+                'Procesando contenido...',
                 'procesando',
                 audioUrl,
                 req.user.userId
@@ -62,7 +69,7 @@ exports.processAudio = async (req, res) => {
         res.json({
             id: audioId,
             status: 'procesando',
-            message: 'Audio recibido y en proceso de análisis.'
+            message: 'Archivo recibido y en proceso de análisis.'
         });
 
         // 3. Iniciar procesamiento pesado en "segundo plano" (sin await para el res)
@@ -88,17 +95,26 @@ exports.processAudio = async (req, res) => {
 
                 if (file.state !== 'ACTIVE') throw new Error('Gemini falló: ' + file.state);
 
-                // Generar Contenido
-                const prompt = `Eres un asistente de estudio experto. Analiza el audio y responde ESTRICTAMENTE en JSON:
+                // Generar Contenido adaptado al tipo de archivo
+                const prompt = `Eres un asistente de estudio experto y analista de contenido multimedial.
+                Analiza el archivo proporcionado (puede ser audio de clase, video, documento PDF/Word, imagen de apuntes o código fuente).
+                
+                Tu tarea es extraer el conocimiento más importante y estructurarlo para un estudiante.
+                Si es un audio/video: Transcribe y resume los puntos clave.
+                Si es un documento: Resume el contenido y destaca conceptos importantes.
+                Si es una imagen: Realiza OCR si hay texto y describe lo que se ve (ej. pizarrones, diagramas).
+                Si es código: Explica qué hace el código, su lógica y puntos clave.
+
+                Responde ESTRICTAMENTE en formato JSON con la siguiente estructura:
                 {
-                  "titulo": "Título corto",
-                  "resumen": "Apuntes en Markdown",
-                  "transcripcion": "Texto completo",
-                  "mapa_mental": "Código Mermaid.js simple"
+                  "titulo": "Un título descriptivo y corto",
+                  "resumen": "Contenido educativo detallado en formato Markdown (usa negritas, listas y encabezados)",
+                  "transcripcion": "Texto extraído o transcripción completa del contenido",
+                  "mapa_mental": "Un esquema de conceptos usando sintaxis simple de Mermaid.js (ej: graph TD\\nA-->B)"
                 }`;
 
                 const response = await ai.models.generateContent({
-                    model: 'gemini-flash-latest',
+                    model: 'gemini-1.5-flash', // Usamos la versión más reciente y capaz
                     config: { responseMimeType: "application/json" },
                     contents: [{
                         role: 'user',

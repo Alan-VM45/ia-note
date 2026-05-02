@@ -80,6 +80,11 @@
         <div class="record-controls">
             <button id="btn-start-record" class="btn-record-main">🎙️</button>
             <button id="btn-stop-record" class="btn-stop-main hidden">⏹️</button>
+            <div class="upload-area">
+                <p>o también puedes</p>
+                <button id="btn-trigger-file" class="btn secondary btn-full">📁 Subir Archivo (PDF, Video, etc.)</button>
+                <input type="file" id="file-input" class="hidden" accept=".pdf,.docx,.txt,.md,.mp3,.wav,.m4a,.webm,.mp4,.mov,.mkv,.jpg,.png,.jpeg,.js,.py,.java">
+            </div>
         </div>
     </div>
 
@@ -139,6 +144,46 @@
         </div>
     </div>
 
+    <!-- VISTA DE CONSEJOS Y NOVEDADES -->
+    <div id="view-tips" class="view">
+        <header class="app-header">
+            <button class="btn-icon" id="btn-back-tips">←</button>
+            <h2>Consejos y Novedades</h2>
+        </header>
+        <main class="tips-container">
+            <div class="tip-card premium">
+                <div class="tip-icon">✨</div>
+                <div class="tip-content">
+                    <h4>¡Ahora EvoClass es Universal!</h4>
+                    <p>Ya no solo puedes grabar audios. Ahora puedes subir <strong>PDFs, Word, Videos</strong> y hasta <strong>fotos de pizarrones</strong>. Gemini lo analizará todo.</p>
+                </div>
+            </div>
+
+            <div class="tips-grid">
+                <div class="tip-item">
+                    <span class="tip-badge">IMPORTANTE</span>
+                    <h4>Clases de +1 Hora</h4>
+                    <p>Si tienes un video muy largo, intenta subir solo el audio (MP3) para que sea más rápido. Las grabaciones directas de la app están optimizadas para durar horas ocupando poco espacio.</p>
+                </div>
+                <div class="tip-item">
+                    <span class="tip-badge">TIP</span>
+                    <h4>Audios y Videos</h4>
+                    <p>Asegúrate de tener una conexión estable. No cierres la pestaña hasta que veas el mensaje de éxito.</p>
+                </div>
+                <div class="tip-item">
+                    <span class="tip-badge">LÍMITES</span>
+                    <h4>Capacidad</h4>
+                    <p>Puedes subir archivos de hasta 300MB. Ideal para documentos extensos o grabaciones de clase en video comprimido.</p>
+                </div>
+                <div class="tip-item">
+                    <span class="tip-badge">TIP</span>
+                    <h4>Chat IA</h4>
+                    <p>Usa el chat para pedirle a Gemini que te haga un examen de prueba basado en tus apuntes.</p>
+                </div>
+            </div>
+        </main>
+    </div>
+
     <!-- MODAL DE MENSAJES -->
     <div id="app-modal" class="modal-overlay hidden">
         <div class="modal-content">
@@ -151,6 +196,7 @@
     <nav class="bottom-nav hidden" id="main-nav">
         <button class="nav-item active" id="nav-home">🏠</button>
         <button class="nav-fab" id="nav-record">+</button>
+        <button class="nav-item" id="nav-tips">💡</button>
     </nav>
 
     <script src="js/app.js"></script>

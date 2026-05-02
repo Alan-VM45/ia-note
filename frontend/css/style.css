@@ -468,3 +468,76 @@ audio::-webkit-media-controls-time-remaining-display { color: white; }
 }
 
 .mermaid { background: #161b22; border-radius: 12px; padding: 10px; overflow-x: auto; min-height: 200px; }
+
+/* --- NUEVOS ESTILOS: Subida de Archivos y Consejos --- */
+.upload-area {
+    margin-top: 2rem;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.5rem;
+    width: 100%;
+}
+.upload-area p {
+    font-size: 0.85rem;
+    color: var(--text-muted);
+}
+.btn.secondary {
+    background: var(--bg-card);
+    border: 1px dashed var(--primary);
+    color: var(--primary-light);
+}
+.btn.secondary:hover {
+    background: var(--bg-card-hover);
+    border-style: solid;
+}
+
+.tips-container {
+    padding: 1.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+}
+.tip-card.premium {
+    background: linear-gradient(135deg, rgba(99, 102, 241, 0.2) 0%, rgba(168, 85, 247, 0.2) 100%);
+    border: 1px solid rgba(168, 85, 247, 0.3);
+    border-radius: 16px;
+    padding: 1.5rem;
+    display: flex;
+    gap: 1rem;
+    align-items: center;
+}
+.tip-icon { font-size: 2rem; }
+.tip-content h4 { margin-bottom: 0.25rem; color: #a5b4fc; }
+.tip-content p { font-size: 0.9rem; line-height: 1.4; color: #d1d5db; }
+
+.tips-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 1rem;
+}
+.tip-item {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 1.2rem;
+}
+.tip-badge {
+    font-size: 0.65rem;
+    background: var(--border);
+    color: var(--text-muted);
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-weight: 700;
+    margin-bottom: 0.5rem;
+    display: inline-block;
+}
+.tip-item h4 { margin-bottom: 0.5rem; font-size: 1rem; }
+.tip-item p { font-size: 0.85rem; line-height: 1.4; color: var(--text-muted); }
+
+@media (min-width: 600px) {
+    .tips-grid {
+        grid-template-columns: 1fr 1fr;
+    }
+}
+

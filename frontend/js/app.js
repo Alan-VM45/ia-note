@@ -22,6 +22,8 @@ document.getElementById('btn-back-detail').addEventListener('click', () => {
     document.getElementById('class-audio').pause();
     switchView('list');
 });
+document.getElementById('btn-back-tips').addEventListener('click', () => switchView('list'));
+document.getElementById('nav-tips').addEventListener('click', () => switchView('tips'));
 
 // Auth Links
 document.getElementById('go-register').addEventListener('click', (e) => {
@@ -112,7 +114,15 @@ function switchView(viewName) {
     const target = document.getElementById(`view-${viewName}`);
     if (target) target.classList.add('active');
     
-    if (viewName === 'list') loadClasses();
+    // Actualizar nav active
+    document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
+    if (viewName === 'list') {
+        loadClasses();
+        document.getElementById('nav-home').classList.add('active');
+    }
+    if (viewName === 'tips') {
+        document.getElementById('nav-tips').classList.add('active');
+    }
 }
 
 // --- API Helper ---
@@ -278,7 +288,7 @@ async function setupAudio() {
             const mimeType = mediaRecorder.mimeType || 'audio/webm';
             const audioBlob = new Blob(audioChunks, { type: mimeType });
             audioChunks = [];
-            await uploadAudio(audioBlob);
+            await uploadFile(audioBlob, 'clase_grabada.webm');
         };
         return true;
     } catch (error) {
@@ -322,11 +332,16 @@ btnStopRecord.addEventListener('click', () => {
     }
 });
 
-async function uploadAudio(audioBlob) {
+async function uploadFile(file, fileName) {
     const formData = new FormData();
-    formData.append('audio', audioBlob, 'clase.webm');
+    // Siempre usamos el campo 'audio' para que el backend no cambie, 
+    // pero el backend ahora es capaz de procesar cualquier tipo.
+    formData.append('audio', file, fileName || file.name);
 
     try {
+        recordLoading.classList.remove('hidden');
+        recordStatus.textContent = 'Subiendo archivo...';
+        
         const response = await fetch('/api/upload-audio', {
             method: 'POST',
             headers: { 'Authorization': `Bearer ${userToken}` },
@@ -337,14 +352,38 @@ async function uploadAudio(audioBlob) {
 
         recordLoading.classList.add('hidden');
         btnStartRecord.classList.remove('hidden');
+        document.getElementById('btn-trigger-file').classList.remove('hidden');
         recordStatus.textContent = 'Listo para grabar';
         openClassDetail(nuevaClase.id);
     } catch (error) {
-        showModal('Error al procesar el audio: ' + error.message);
+        showModal('Error al procesar: ' + error.message);
         recordLoading.classList.add('hidden');
         btnStartRecord.classList.remove('hidden');
+        document.getElementById('btn-trigger-file').classList.remove('hidden');
     }
 }
+
+// Eventos para Subida de Archivos
+const fileInput = document.getElementById('file-input');
+const btnTriggerFile = document.getElementById('btn-trigger-file');
+
+btnTriggerFile.addEventListener('click', () => fileInput.click());
+
+fileInput.addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    if (file.size > 150 * 1024 * 1024) {
+        return showModal('El archivo es demasiado grande (máx 150MB)');
+    }
+
+    btnStartRecord.classList.add('hidden');
+    btnTriggerFile.classList.add('hidden');
+    recordStatus.textContent = 'Preparando subida...';
+    
+    await uploadFile(file);
+    fileInput.value = ''; // Limpiar
+});
 
 // --- Pestañas y Mapa ---
 document.querySelectorAll('.tab-btn').forEach(btn => {

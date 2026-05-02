@@ -28,9 +28,10 @@ app.get('/api/version', (req, res) => {
 
 // Iniciar base de datos y luego el servidor
 initDB().then(() => {
-    app.listen(PORT, () => {
+    const server = app.listen(PORT, () => {
         console.log(`Servidor corriendo en http://localhost:${PORT}`);
     });
+    server.timeout = 900000; // 15 minutos para subidas muy pesadas
 }).catch(err => {
     console.error('Error inicializando la base de datos:', err);
 });
