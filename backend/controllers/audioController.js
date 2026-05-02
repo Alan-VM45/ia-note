@@ -3,6 +3,9 @@ const fs = require('fs');
 const path = require('path');
 const { client } = require('../database');
 const cloudinary = require('cloudinary').v2;
+// Intento de importación robusta para diferentes versiones de la librería
+const officeModule = require('office-text-extractor');
+const officeTextExtractor = officeModule.officeTextExtractor || officeModule.default || officeModule;
 
 const ai = new GoogleGenAI(process.env.GEMINI_API_KEY || '');
 
@@ -72,61 +75,82 @@ exports.processAudio = async (req, res) => {
             message: 'Archivo recibido y en proceso de análisis.'
         });
 
-        // 3. Iniciar procesamiento pesado en "segundo plano" (sin await para el res)
-        // Usamos una función autoejecutada para que los errores no afecten al hilo principal
+        // 3. Iniciar procesamiento pesado en "segundo plano"
         (async () => {
             try {
                 console.log(`[${audioId}] Iniciando proceso Gemini en background...`);
                 
-                // Subir a Gemini
-                const uploadResult = await ai.files.upload({
-                    file: tempFilePath,
-                    config: { mimeType: req.file.mimetype }
-                });
+                const isOfficeFile = req.file.mimetype.includes('officedocument') || 
+                                    req.file.mimetype.includes('ms-powerpoint') || 
+                                    req.file.mimetype.includes('msword') ||
+                                    req.file.originalname.endsWith('.docx') ||
+                                    req.file.originalname.endsWith('.pptx');
 
-                // Esperar procesamiento
-                let file = await ai.files.get({ name: uploadResult.name });
-                let retryCount = 0;
-                while (file.state === 'PROCESSING' && retryCount < 40) {
-                    await new Promise(r => setTimeout(r, 2000));
-                    file = await ai.files.get({ name: uploadResult.name });
-                    retryCount++;
+                let aiResponse;
+
+                if (isOfficeFile) {
+                    console.log(`[${audioId}] Detectado archivo de Office, extrayendo texto...`);
+                    const extractedText = await officeTextExtractor(tempFilePath);
+                    
+                    const prompt = `Eres un asistente de estudio experto. Analiza el siguiente texto extraído de un documento (${req.file.originalname}) y genera un resumen educativo.
+                    
+                    Responde ESTRICTAMENTE en formato JSON:
+                    {
+                      "titulo": "Título descriptivo",
+                      "resumen": "Contenido detallado en Markdown",
+                      "transcripcion": "Texto extraído completo",
+                      "mapa_mental": "Esquema Mermaid.js"
+                    }
+
+                    CONTENIDO DEL DOCUMENTO:
+                    ${extractedText}`;
+
+                    aiResponse = await ai.models.generateContent({
+                        model: 'gemini-flash-latest',
+                        config: { responseMimeType: "application/json" },
+                        contents: [{ role: 'user', parts: [{ text: prompt }] }]
+                    });
+                } else {
+                    // Proceso normal para PDF, Audio, Video e Imágenes (vía Gemini File API)
+                    const uploadResult = await ai.files.upload({
+                        file: tempFilePath,
+                        config: { mimeType: req.file.mimetype }
+                    });
+
+                    let file = await ai.files.get({ name: uploadResult.name });
+                    let retryCount = 0;
+                    while (file.state === 'PROCESSING' && retryCount < 40) {
+                        await new Promise(r => setTimeout(r, 2000));
+                        file = await ai.files.get({ name: uploadResult.name });
+                        retryCount++;
+                    }
+
+                    if (file.state !== 'ACTIVE') throw new Error('Gemini falló: ' + file.state);
+
+                    const prompt = `Eres un asistente de estudio experto y analista de contenido multimedial.
+                    Analiza el archivo proporcionado. Extrae el conocimiento y estructúralo para un estudiante.
+                    Responde ESTRICTAMENTE en formato JSON:
+                    {
+                      "titulo": "Un título descriptivo y corto",
+                      "resumen": "Contenido educativo detallado en formato Markdown",
+                      "transcripcion": "Texto extraído o transcripción completa",
+                      "mapa_mental": "Esquema Mermaid.js (ej: graph TD\\nA-->B)"
+                    }`;
+
+                    aiResponse = await ai.models.generateContent({
+                        model: 'gemini-flash-latest',
+                        config: { responseMimeType: "application/json" },
+                        contents: [{
+                            role: 'user',
+                            parts: [
+                                { fileData: { fileUri: uploadResult.uri, mimeType: uploadResult.mimeType } },
+                                { text: prompt }
+                            ]
+                        }]
+                    });
                 }
 
-                if (file.state !== 'ACTIVE') throw new Error('Gemini falló: ' + file.state);
-
-                // Generar Contenido adaptado al tipo de archivo
-                const prompt = `Eres un asistente de estudio experto y analista de contenido multimedial.
-                Analiza el archivo proporcionado (puede ser audio de clase, video, documento PDF/Word, imagen de apuntes o código fuente).
-                
-                Tu tarea es extraer el conocimiento más importante y estructurarlo para un estudiante.
-                Si es un audio/video: Transcribe y resume los puntos clave.
-                Si es un documento: Resume el contenido y destaca conceptos importantes.
-                Si es una imagen: Realiza OCR si hay texto y describe lo que se ve (ej. pizarrones, diagramas).
-                Si es código: Explica qué hace el código, su lógica y puntos clave.
-
-                Responde ESTRICTAMENTE en formato JSON con la siguiente estructura:
-                {
-                  "titulo": "Un título descriptivo y corto",
-                  "resumen": "Contenido educativo detallado en formato Markdown (usa negritas, listas y encabezados)",
-                  "transcripcion": "Texto extraído o transcripción completa del contenido",
-                  "mapa_mental": "Un esquema de conceptos usando sintaxis simple de Mermaid.js (ej: graph TD\\nA-->B)"
-                }`;
-
-                const response = await ai.models.generateContent({
-                    model: 'gemini-1.5-flash-latest', // Cambiado a -latest para compatibilidad
-                    config: { responseMimeType: "application/json" },
-                    contents: [{
-                        role: 'user',
-                        parts: [
-                            { fileData: { fileUri: uploadResult.uri, mimeType: uploadResult.mimeType } },
-                            { text: prompt }
-                        ]
-                    }]
-                });
-
-                let cleanedText = response.text.trim();
-                // Eliminar posibles bloques de código markdown que Gemini a veces añade a pesar de pedirle JSON
+                let cleanedText = aiResponse.text.trim();
                 if (cleanedText.startsWith('```')) {
                     cleanedText = cleanedText.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
                 }
@@ -135,8 +159,7 @@ exports.processAudio = async (req, res) => {
                 try {
                     aiData = JSON.parse(cleanedText);
                 } catch (parseError) {
-                    console.error("Error en primer intento de parseo:", parseError);
-                    // Segundo intento: limpiar caracteres de control invisibles
+                    console.error("Error parseando JSON de Gemini:", parseError);
                     const secondAttemptText = cleanedText.replace(/[\u0000-\u001F\u007F-\u009F]/g, "");
                     aiData = JSON.parse(secondAttemptText);
                 }
