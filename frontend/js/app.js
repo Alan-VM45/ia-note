@@ -6,6 +6,10 @@ let currentClass = null;
 let recordingInterval;
 let recordingTime = 0;
 let userToken = localStorage.getItem('token');
+let currentSessionId = null;
+let chunkIndex = 0;
+let isChunkedRecording = false;
+
 
 // Elementos DOM
 const viewAuth = document.getElementById('view-auth');
@@ -73,10 +77,24 @@ async function handleAuth(type) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ username: user, password: pass })
         });
+
+        // Debug: Verificar si la respuesta es JSON o HTML
+        const contentType = response.headers.get("content-type");
+        if (!response.ok) {
+            const errorBody = await response.text();
+            console.error('Error del servidor (Cuerpo):', errorBody);
+            
+            // Intentar extraer mensaje de error si es JSON, sino usar el texto
+            try {
+                const errorData = JSON.parse(errorBody);
+                throw new Error(errorData.error || 'Error en la petición');
+            } catch (e) {
+                throw new Error(`Error ${response.status}: Servidor no devolvió JSON.`);
+            }
+        }
+
         const data = await response.json();
-
-        if (data.error) throw new Error(data.error);
-
+        
         if (type === 'login') {
             localStorage.setItem('token', data.token);
             userToken = data.token;
@@ -281,16 +299,22 @@ async function setupAudio() {
 
         mediaRecorder = new MediaRecorder(stream, options);
         
-        mediaRecorder.ondataavailable = (event) => {
-            if (event.data.size > 0) audioChunks.push(event.data);
+        mediaRecorder.ondataavailable = async (event) => {
+            if (event.data.size > 0) {
+                audioChunks.push(event.data);
+            }
         };
         mediaRecorder.onstop = async () => {
             const mimeType = mediaRecorder.mimeType || 'audio/webm';
             const audioBlob = new Blob(audioChunks, { type: mimeType });
-            audioChunks = [];
             await uploadFile(audioBlob, 'clase_grabada.webm');
+            
+            // Reset
+            audioChunks = [];
+            currentSessionId = null;
         };
         return true;
+
     } catch (error) {
         showModal('Necesitas permisos de micrófono para grabar.');
         return false;
@@ -303,7 +327,12 @@ btnStartRecord.addEventListener('click', async () => {
         if (!ok) return;
     }
     if (mediaRecorder.state === 'inactive') {
-        mediaRecorder.start();
+        audioChunks = [];
+        currentSessionId = null;
+        
+        // Cada 30 segundos se dispara ondataavailable
+        mediaRecorder.start(30000); 
+        
         isRecording = true;
         btnStartRecord.classList.add('hidden');
         btnStopRecord.classList.remove('hidden');
@@ -318,6 +347,7 @@ btnStartRecord.addEventListener('click', async () => {
             recordTimer.textContent = `${m}:${s}`;
         }, 1000);
     }
+
 });
 
 btnStopRecord.addEventListener('click', () => {
@@ -333,35 +363,98 @@ btnStopRecord.addEventListener('click', () => {
 });
 
 async function uploadFile(file, fileName) {
-    const formData = new FormData();
-    // Siempre usamos el campo 'audio' para que el backend no cambie, 
-    // pero el backend ahora es capaz de procesar cualquier tipo.
-    formData.append('audio', file, fileName || file.name);
-
     try {
         recordLoading.classList.remove('hidden');
-        recordStatus.textContent = 'Subiendo archivo...';
+        recordStatus.textContent = 'Obteniendo permiso de subida...';
         
-        const response = await fetch('/api/upload-audio', {
-            method: 'POST',
-            headers: { 'Authorization': `Bearer ${userToken}` },
-            body: formData
+        // 1. Obtener firma del backend
+        const sigRes = await fetch('/api/cloudinary-signature', {
+            headers: { 'Authorization': `Bearer ${userToken}` }
         });
-        const nuevaClase = await response.json();
+        if (!sigRes.ok) throw new Error('Error al obtener permisos de subida');
+        const sigData = await sigRes.json();
+        
+        // 2. Subir directamente a Cloudinary saltándonos el servidor Render
+        recordStatus.textContent = 'Subiendo archivo (0%)...';
+        
+        const cloudinaryFormData = new FormData();
+        cloudinaryFormData.append('file', file, fileName || file.name);
+        cloudinaryFormData.append('api_key', sigData.apiKey);
+        cloudinaryFormData.append('timestamp', sigData.timestamp);
+        cloudinaryFormData.append('signature', sigData.signature);
+        cloudinaryFormData.append('folder', 'ia-notes');
+
+        // Determinar el tipo de recurso para Cloudinary (video es para audio/video)
+        let resourceType = 'raw';
+        const fileType = file.type || '';
+        if (fileType.startsWith('image/')) resourceType = 'image';
+        else if (fileType.startsWith('audio/') || fileType.startsWith('video/')) resourceType = 'video';
+
+        const uploadUrl = `https://api.cloudinary.com/v1_1/${sigData.cloudName}/${resourceType}/upload`;
+
+        const cloudinaryData = await new Promise((resolve, reject) => {
+            const xhr = new XMLHttpRequest();
+            xhr.open('POST', uploadUrl, true);
+            
+            xhr.upload.onprogress = (e) => {
+                if (e.lengthComputable) {
+                    const percent = Math.round((e.loaded / e.total) * 100);
+                    recordStatus.textContent = `Subiendo archivo (${percent}%)...`;
+                }
+            };
+
+            xhr.onload = () => {
+                if (xhr.status === 200) {
+                    resolve(JSON.parse(xhr.responseText));
+                } else {
+                    reject(new Error('Error en Cloudinary: ' + xhr.responseText));
+                }
+            };
+            
+            xhr.onerror = () => reject(new Error('Fallo de red al intentar subir el archivo a Cloudinary'));
+            xhr.send(cloudinaryFormData);
+        });
+
+        // 3. Avisar al backend que ya está subido y empezar el proceso pesado de IA en background
+        recordStatus.textContent = 'Iniciando análisis de IA...';
+        
+        const serverRes = await fetch('/api/process-url', {
+            method: 'POST',
+            headers: { 
+                'Authorization': `Bearer ${userToken}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                fileUrl: cloudinaryData.secure_url,
+                mimetype: fileType || 'application/octet-stream',
+                originalname: fileName || file.name || 'archivo'
+            })
+        });
+
+        const nuevaClase = await serverRes.json();
         if (nuevaClase.error) throw new Error(nuevaClase.error);
 
-        recordLoading.classList.add('hidden');
-        btnStartRecord.classList.remove('hidden');
-        document.getElementById('btn-trigger-file').classList.remove('hidden');
-        recordStatus.textContent = 'Listo para grabar';
-        openClassDetail(nuevaClase.id);
+        finalizeUploadUI(nuevaClase.id);
     } catch (error) {
         showModal('Error al procesar: ' + error.message);
-        recordLoading.classList.add('hidden');
-        btnStartRecord.classList.remove('hidden');
-        document.getElementById('btn-trigger-file').classList.remove('hidden');
+        resetUploadUI();
     }
 }
+
+function finalizeUploadUI(id) {
+    recordLoading.classList.add('hidden');
+    btnStartRecord.classList.remove('hidden');
+    document.getElementById('btn-trigger-file').classList.remove('hidden');
+    recordStatus.textContent = 'Listo para grabar';
+    openClassDetail(id);
+}
+
+function resetUploadUI() {
+    recordLoading.classList.add('hidden');
+    btnStartRecord.classList.remove('hidden');
+    document.getElementById('btn-trigger-file').classList.remove('hidden');
+}
+
 
 // Eventos para Subida de Archivos
 const fileInput = document.getElementById('file-input');

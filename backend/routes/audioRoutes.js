@@ -23,10 +23,19 @@ router.get('/classes', audioController.getClasses);
 router.get('/classes/:id', audioController.getClassById);
 router.delete('/classes/:id', audioController.deleteClass);
 
+// Rutas de Cloudinary Direct Upload
+router.get('/cloudinary-signature', audioController.getCloudinarySignature);
+router.post('/process-url', audioController.processUrl);
+
 // Ruta para subir el audio y procesarlo
 router.post('/upload-audio', upload.single('audio'), audioController.processAudio);
 
+// Rutas para subida fragmentada (Audios > 5 min)
+router.post('/upload-chunk', upload.single('audio'), audioController.uploadChunk);
+router.post('/process-chunks', audioController.processChunks);
+
 // Ruta para el chat interactivo
 router.post('/chat', audioController.chatWithNotes);
+
 
 module.exports = router;

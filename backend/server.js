@@ -28,6 +28,16 @@ app.get('/api/version', (req, res) => {
 
 // Iniciar base de datos y luego el servidor
 initDB().then(() => {
+    // Middleware de error global (Siempre devuelve JSON)
+    app.use((err, req, res, next) => {
+        console.error('--- ERROR GLOBAL ---');
+        console.error(err.stack);
+        res.status(500).json({ 
+            error: 'Ocurrió un error inesperado en el servidor.',
+            details: err.message
+        });
+    });
+
     const server = app.listen(PORT, () => {
         console.log(`Servidor corriendo en http://localhost:${PORT}`);
     });
@@ -35,3 +45,4 @@ initDB().then(() => {
 }).catch(err => {
     console.error('Error inicializando la base de datos:', err);
 });
+
