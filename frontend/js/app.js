@@ -427,6 +427,8 @@ async function uploadFile(file, fileName) {
             },
             body: JSON.stringify({
                 fileUrl: cloudinaryData.secure_url,
+                publicId: cloudinaryData.public_id,
+                resourceType: resourceType,
                 mimetype: fileType || 'application/octet-stream',
                 originalname: fileName || file.name || 'archivo'
             })

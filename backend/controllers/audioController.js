@@ -119,7 +119,7 @@ exports.getCloudinarySignature = (req, res) => {
 
 exports.processUrl = async (req, res) => {
     try {
-        const { fileUrl, mimetype, originalname } = req.body;
+        const { fileUrl, mimetype, originalname, publicId, resourceType } = req.body;
         if (!fileUrl) {
             return res.status(400).json({ error: 'No se proporcionó URL del archivo.' });
         }
@@ -155,7 +155,20 @@ exports.processUrl = async (req, res) => {
             
             try {
                 console.log(`[${audioId}] Descargando archivo desde Cloudinary al servidor para analizar...`);
-                await downloadFile(fileUrl, tempFilePath);
+                
+                let downloadUrl = fileUrl;
+                if (publicId && resourceType) {
+                    console.log(`[${audioId}] Generando URL firmada para descarga privada de: ${publicId}`);
+                    // Generamos una URL firmada que expire pronto para seguridad
+                    downloadUrl = cloudinary.url(publicId, {
+                        resource_type: resourceType,
+                        type: 'upload',
+                        sign_url: true,
+                        secure: true
+                    });
+                }
+
+                await downloadFile(downloadUrl, tempFilePath);
                 
                 // Reutilizamos la lógica inyectando el path en un objeto simulado req.file
                 req.file = {
