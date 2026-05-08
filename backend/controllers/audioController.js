@@ -10,6 +10,37 @@ const officeTextExtractor = officeModule.officeTextExtractor || officeModule.def
 
 const ai = new GoogleGenAI(process.env.GEMINI_API_KEY || '');
 
+const STUDY_SYSTEM_PROMPT = `
+ACTÚA COMO: Un Ingeniero en Conocimiento y Tutor de Aprendizaje de Alto Rendimiento.
+
+TU MISIÓN: Realizar un análisis exhaustivo del material proporcionado. No quiero un resumen generalista. Quiero un Sistema de Estudio Integral que cubra el 100% de los temas mencionados en el material, sin omitir subtemas o detalles técnicos.
+
+INSTRUCCIONES DE PROCESAMIENTO (Protocolo Antipereza):
+1. Fidelidad Absoluta: Usa ÚNICAMENTE la información del material proporcionado. Si el material dice algo específico que contradice tu base de datos, prioriza el material.
+2. Mapeo de Unidades: Divide el resumen siguiendo estrictamente el orden de las unidades o capítulos del archivo. Si la Unidad 1 tiene 5 subtemas, los 5 deben estar desarrollados en profundidad.
+3. Técnica de Estudio Integrada (Active Recall): No solo resumas. Para cada concepto clave, genera:
+   - Explicación Técnica: Profunda y con rigor académico.
+   - Simplificación Feynman: Una analogía sencilla para entender la lógica detrás del dato.
+   - Pregunta de Autoevaluación: Una pregunta que me obligue a recordar el concepto sin mirar el apunte.
+
+ESTRUCTURA OBLIGATORIA POR TEMA:
+[Nombre del Tema / Unidad]
+- Metavisión del Concepto: ¿Por qué existe este tema y cómo se conecta con el anterior?
+- Desarrollo Técnico Exhaustivo: (Aquí vuelcas toda la info del material: fórmulas, reglas, excepciones, pasos). Usa tablas para comparar si hay más de dos elementos.
+- Análisis de "Giro de Rueda" (Casos de Borde): ¿En qué situaciones falla este concepto o qué error común cometen los estudiantes aquí según el material?
+- Laboratorio Práctico: Si hay matemáticas o lógica, inventa un ejercicio basado exactamente en los ejemplos del material y resuélvelo paso a paso.
+
+RESTRICCIÓN CRÍTICA: Si el material es muy largo, no intentes resumirlo todo en una sola respuesta si eso implica perder calidad. Si detectas que vas por la mitad del material y te estás quedando sin espacio, detente y dime: "Continuará en la siguiente parte", para que yo te pida seguir. No sacrifiques profundidad por brevedad.
+
+IMPORTANTE: Responde EXCLUSIVAMENTE en formato JSON con esta estructura:
+{
+  "titulo": "Título descriptivo del material",
+  "resumen": "El Sistema de Estudio Integral siguiendo la estructura obligatoria en Markdown",
+  "transcripcion": "Transcripción o extracción de texto completa",
+  "mapa_mental": "Esquema Mermaid.js (ej: graph TD\\nA-->B)"
+}
+`;
+
 cloudinary.config({
     cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
     api_key: process.env.CLOUDINARY_API_KEY,
@@ -156,16 +187,22 @@ exports.processUrl = async (req, res) => {
 
 // Función auxiliar para separar la lógica de Gemini de processAudio y processUrl
 async function processWithGemini(audioId, tempFilePath, fileObj, audioUrl) {
-    const isOfficeFile = fileObj.mimetype.includes('officedocument') || 
-                        fileObj.mimetype.includes('ms-powerpoint') || 
-                        fileObj.mimetype.includes('msword') ||
-                        fileObj.mimetype.includes('application/vnd.ms-powerpoint') ||
-                        fileObj.originalname.endsWith('.docx') ||
-                        fileObj.originalname.endsWith('.pptx') ||
-                        fileObj.originalname.endsWith('.ppt') ||
-                        fileObj.originalname.endsWith('.doc');
+    const mimetype = fileObj.mimetype.toLowerCase();
+    const originalName = fileObj.originalname.toLowerCase();
 
-    let aiResponse;
+    // Detectar si es un documento de texto (PDF, Word, Powerpoint, Texto)
+    const isDocument = mimetype.includes('officedocument') || 
+                      mimetype.includes('ms-powerpoint') || 
+                      mimetype.includes('msword') ||
+                      mimetype.includes('application/pdf') ||
+                      mimetype.includes('text/plain') ||
+                      originalName.endsWith('.docx') ||
+                      originalName.endsWith('.pptx') ||
+                      originalName.endsWith('.ppt') ||
+                      originalName.endsWith('.doc') ||
+                      originalName.endsWith('.pdf') ||
+                      originalName.endsWith('.txt');
+
     const callGeminiWithRetry = async (payload, retries = 3) => {
         for (let i = 0; i < retries; i++) {
             try {
@@ -181,86 +218,114 @@ async function processWithGemini(audioId, tempFilePath, fileObj, audioUrl) {
         }
     };
 
-    if (isOfficeFile) {
-        console.log(`[${audioId}] Detectado archivo de Office, extrayendo texto...`);
-        const extractedText = await officeTextExtractor(tempFilePath);
-        
-        const prompt = `Eres un asistente de estudio experto. Analiza el siguiente texto extraído de un documento (${fileObj.originalname}) y genera un resumen educativo.
-        
-        Responde ESTRICTAMENTE en formato JSON:
-        {
-          "titulo": "Título descriptivo",
-          "resumen": "Contenido detallado en Markdown",
-          "transcripcion": "Texto extraído completo",
-          "mapa_mental": "Esquema Mermaid.js"
-        }
+    let aiData = {
+        titulo: originalName,
+        resumen: "",
+        transcripcion: "",
+        mapa_mental: ""
+    };
 
-        CONTENIDO DEL DOCUMENTO:
-        ${extractedText}`;
-
-        aiResponse = await callGeminiWithRetry({
-            model: 'gemini-flash-latest',
-            config: { responseMimeType: "application/json" },
-            contents: [{ role: 'user', parts: [{ text: prompt }] }]
-        });
-    } else {
-        const uploadResult = await ai.files.upload({
-            file: tempFilePath,
-            config: { mimeType: fileObj.mimetype }
-        });
-
-        let file = await ai.files.get({ name: uploadResult.name });
-        let retryCount = 0;
-        while (file.state === 'PROCESSING' && retryCount < 40) {
-            await new Promise(r => setTimeout(r, 2000));
-            file = await ai.files.get({ name: uploadResult.name });
-            retryCount++;
-        }
-
-        if (file.state !== 'ACTIVE') throw new Error('Gemini falló: ' + file.state);
-
-        const prompt = `Eres un asistente de estudio experto y analista de contenido multimedial.
-        Analiza el archivo proporcionado. Extrae el conocimiento y estructúralo para un estudiante.
-        Responde ESTRICTAMENTE en formato JSON:
-        {
-          "titulo": "Un título descriptivo y corto",
-          "resumen": "Contenido educativo detallado en formato Markdown",
-          "transcripcion": "Texto extraído o transcripción completa",
-          "mapa_mental": "Esquema Mermaid.js (ej: graph TD\\nA-->B)"
-        }`;
-
-        aiResponse = await callGeminiWithRetry({
-            model: 'gemini-flash-latest',
-            config: { responseMimeType: "application/json" },
-            contents: [{
-                role: 'user',
-                parts: [
-                    { fileData: { fileUri: uploadResult.uri, mimeType: uploadResult.mimeType } },
-                    { text: prompt }
-                ]
-            }]
-        });
-    }
-
-    let cleanedText = aiResponse.text.trim();
-    if (cleanedText.startsWith('\`\`\`')) {
-        cleanedText = cleanedText.replace(/^\`\`\`(?:json)?\n?/, '').replace(/\n?\`\`\`$/, '');
-    }
-    
-    let aiData;
     try {
-        aiData = JSON.parse(cleanedText);
-    } catch (parseError) {
-        console.error("Error parseando JSON de Gemini:", parseError);
-        const secondAttemptText = cleanedText.replace(/[\u0000-\u001F\u007F-\u009F]/g, "");
-        aiData = JSON.parse(secondAttemptText);
-    }
+        if (isDocument) {
+            console.log(`[${audioId}] Detectado documento, extrayendo texto para segmentación...`);
+            const extractedText = await officeTextExtractor(tempFilePath);
+            
+            // Forzamos segmentación: dividimos el texto en trozos de aprox 15k caracteres
+            // para evitar el "Lost in the Middle" y asegurar profundidad.
+            const CHUNK_SIZE = 15000;
+            const textChunks = [];
+            for (let i = 0; i < extractedText.length; i += CHUNK_SIZE) {
+                textChunks.push(extractedText.substring(i, i + CHUNK_SIZE));
+            }
 
-    await client.execute({
-        sql: "UPDATE classes SET titulo = ?, resumen = ?, transcripcion = ?, mapa_mental = ?, status = 'completado' WHERE id = ?",
-        args: [aiData.titulo, aiData.resumen, aiData.transcripcion, aiData.mapa_mental, audioId]
-    });
-    console.log(`[${audioId}] Procesamiento completado con éxito.`);
+            console.log(`[${audioId}] Procesando ${textChunks.length} segmentos del documento...`);
+
+            for (let i = 0; i < textChunks.length; i++) {
+                const chunkPrompt = `Este es el FRAGMENTO ${i + 1} de ${textChunks.length} del material "${originalName}".
+                ${STUDY_SYSTEM_PROMPT}
+                
+                ${i > 0 ? "IMPORTANTE: Este es un fragmento de continuación. No repitas el título general, enfócate en desarrollar los temas de este fragmento siguiendo la estructura obligatoria." : ""}
+                
+                CONTENIDO DEL FRAGMENTO:
+                ${textChunks[i]}`;
+
+                const aiResponse = await callGeminiWithRetry({
+                    model: 'gemini-flash-latest',
+                    config: { responseMimeType: "application/json" },
+                    contents: [{ role: 'user', parts: [{ text: chunkPrompt }] }]
+                });
+
+                let cleanedText = aiResponse.text.trim();
+                if (cleanedText.startsWith('```')) {
+                    cleanedText = cleanedText.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
+                }
+                
+                const partData = JSON.parse(cleanedText);
+                
+                if (i === 0) {
+                    aiData.titulo = partData.titulo;
+                    aiData.mapa_mental = partData.mapa_mental;
+                }
+                aiData.resumen += (i > 0 ? "\n\n---\n\n" : "") + partData.resumen;
+                aiData.transcripcion += (i > 0 ? "\n\n" : "") + (partData.transcripcion || textChunks[i]);
+
+                // Actualizar progreso en DB opcionalmente
+                await client.execute({
+                    sql: "UPDATE classes SET resumen = ?, status = 'procesando' WHERE id = ?",
+                    args: [aiData.resumen + "\n\n*(Procesando parte " + (i + 1) + " de " + textChunks.length + "...)*", audioId]
+                });
+            }
+        } else {
+            // Proceso para Audio/Video/Imágenes (usamos File API de Gemini)
+            console.log(`[${audioId}] Procesando multimedia con File API...`);
+            const uploadResult = await ai.files.upload({
+                file: tempFilePath,
+                config: { mimeType: fileObj.mimetype }
+            });
+
+            let file = await ai.files.get({ name: uploadResult.name });
+            let retryCount = 0;
+            while (file.state === 'PROCESSING' && retryCount < 40) {
+                await new Promise(r => setTimeout(r, 2000));
+                file = await ai.files.get({ name: uploadResult.name });
+                retryCount++;
+            }
+
+            if (file.state !== 'ACTIVE') throw new Error('Gemini falló: ' + file.state);
+
+            const aiResponse = await callGeminiWithRetry({
+                model: 'gemini-flash-latest',
+                config: { responseMimeType: "application/json" },
+                contents: [{
+                    role: 'user',
+                    parts: [
+                        { fileData: { fileUri: uploadResult.uri, mimeType: uploadResult.mimeType } },
+                        { text: STUDY_SYSTEM_PROMPT }
+                    ]
+                }]
+            });
+
+            let cleanedText = aiResponse.text.trim();
+            if (cleanedText.startsWith('```')) {
+                cleanedText = cleanedText.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
+            }
+            const data = JSON.parse(cleanedText);
+            aiData.titulo = data.titulo;
+            aiData.resumen = data.resumen;
+            aiData.transcripcion = data.transcripcion;
+            aiData.mapa_mental = data.mapa_mental;
+        }
+
+        await client.execute({
+            sql: "UPDATE classes SET titulo = ?, resumen = ?, transcripcion = ?, mapa_mental = ?, status = 'completado' WHERE id = ?",
+            args: [aiData.titulo, aiData.resumen, aiData.transcripcion, aiData.mapa_mental, audioId]
+        });
+        console.log(`[${audioId}] Procesamiento completado con éxito.`);
+
+    } catch (error) {
+        console.error(`[${audioId}] Error en processWithGemini:`, error);
+        throw error;
+    }
 }
 
 
@@ -323,119 +388,7 @@ exports.processAudio = async (req, res) => {
         (async () => {
             try {
                 console.log(`[${audioId}] Iniciando proceso Gemini en background...`);
-                
-                const mimetype = req.file.mimetype.toLowerCase();
-                const originalName = req.file.originalname.toLowerCase();
-                
-                const isOfficeFile = mimetype.includes('officedocument') || 
-                                    mimetype.includes('ms-powerpoint') || 
-                                    mimetype.includes('msword') ||
-                                    mimetype.includes('application/vnd.ms-powerpoint') ||
-                                    originalName.endsWith('.docx') ||
-                                    originalName.endsWith('.pptx') ||
-                                    originalName.endsWith('.ppt') ||
-                                    originalName.endsWith('.doc');
-
-
-                let aiResponse;
-                const callGeminiWithRetry = async (payload, retries = 3) => {
-                    for (let i = 0; i < retries; i++) {
-                        try {
-                            return await ai.models.generateContent(payload);
-                        } catch (err) {
-                            if (err.message.includes('503') || err.message.includes('high demand')) {
-                                console.log(`[${audioId}] Gemini ocupado (503), reintentando en ${2000 * (i + 1)}ms...`);
-                                await new Promise(r => setTimeout(r, 2000 * (i + 1)));
-                                continue;
-                            }
-                            throw err;
-                        }
-                    }
-                };
-
-                if (isOfficeFile) {
-                    console.log(`[${audioId}] Detectado archivo de Office, extrayendo texto...`);
-                    const extractedText = await officeTextExtractor(tempFilePath);
-                    
-                    const prompt = `Eres un asistente de estudio experto. Analiza el siguiente texto extraído de un documento (${req.file.originalname}) y genera un resumen educativo.
-                    
-                    Responde ESTRICTAMENTE en formato JSON:
-                    {
-                      "titulo": "Título descriptivo",
-                      "resumen": "Contenido detallado en Markdown",
-                      "transcripcion": "Texto extraído completo",
-                      "mapa_mental": "Esquema Mermaid.js"
-                    }
-
-                    CONTENIDO DEL DOCUMENTO:
-                    ${extractedText}`;
-
-                    aiResponse = await callGeminiWithRetry({
-                        model: 'gemini-flash-latest',
-                        config: { responseMimeType: "application/json" },
-                        contents: [{ role: 'user', parts: [{ text: prompt }] }]
-                    });
-                } else {
-                    // Proceso normal para PDF, Audio, Video e Imágenes (vía Gemini File API)
-                    const uploadResult = await ai.files.upload({
-                        file: tempFilePath,
-                        config: { mimeType: req.file.mimetype }
-                    });
-
-                    let file = await ai.files.get({ name: uploadResult.name });
-                    let retryCount = 0;
-                    while (file.state === 'PROCESSING' && retryCount < 40) {
-                        await new Promise(r => setTimeout(r, 2000));
-                        file = await ai.files.get({ name: uploadResult.name });
-                        retryCount++;
-                    }
-
-                    if (file.state !== 'ACTIVE') throw new Error('Gemini falló: ' + file.state);
-
-                    const prompt = `Eres un asistente de estudio experto y analista de contenido multimedial.
-                    Analiza el archivo proporcionado. Extrae el conocimiento y estructúralo para un estudiante.
-                    Responde ESTRICTAMENTE en formato JSON:
-                    {
-                      "titulo": "Un título descriptivo y corto",
-                      "resumen": "Contenido educativo detallado en formato Markdown",
-                      "transcripcion": "Texto extraído o transcripción completa",
-                      "mapa_mental": "Esquema Mermaid.js (ej: graph TD\\nA-->B)"
-                    }`;
-
-                    aiResponse = await callGeminiWithRetry({
-                        model: 'gemini-flash-latest',
-                        config: { responseMimeType: "application/json" },
-                        contents: [{
-                            role: 'user',
-                            parts: [
-                                { fileData: { fileUri: uploadResult.uri, mimeType: uploadResult.mimeType } },
-                                { text: prompt }
-                            ]
-                        }]
-                    });
-                }
-
-                let cleanedText = aiResponse.text.trim();
-                if (cleanedText.startsWith('```')) {
-                    cleanedText = cleanedText.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
-                }
-                
-                let aiData;
-                try {
-                    aiData = JSON.parse(cleanedText);
-                } catch (parseError) {
-                    console.error("Error parseando JSON de Gemini:", parseError);
-                    const secondAttemptText = cleanedText.replace(/[\u0000-\u001F\u007F-\u009F]/g, "");
-                    aiData = JSON.parse(secondAttemptText);
-                }
-
-                // 4. Actualizar registro final
-                await client.execute({
-                    sql: "UPDATE classes SET titulo = ?, resumen = ?, transcripcion = ?, mapa_mental = ?, status = 'completado' WHERE id = ?",
-                    args: [aiData.titulo, aiData.resumen, aiData.transcripcion, aiData.mapa_mental, audioId]
-                });
-                console.log(`[${audioId}] Procesamiento completado con éxito.`);
-
+                await processWithGemini(audioId, tempFilePath, req.file, audioUrl);
             } catch (bgError) {
                 console.error(`[${audioId}] ERROR EN BACKGROUND (Gemini/Turso):`, bgError);
                 
