@@ -383,11 +383,12 @@ async function uploadFile(file, fileName) {
         cloudinaryFormData.append('timestamp', sigData.timestamp);
         cloudinaryFormData.append('signature', sigData.signature);
         cloudinaryFormData.append('folder', 'ia-notes');
+        cloudinaryFormData.append('access_mode', 'public'); // Requerido por la nueva firma
 
         // Determinar el tipo de recurso para Cloudinary (video es para audio/video)
         let resourceType = 'raw';
-        const fileType = file.type || '';
-        if (fileType.startsWith('image/')) resourceType = 'image';
+        const fileType = (file.type || '').toLowerCase();
+        if (fileType.startsWith('image/') || fileType.includes('pdf')) resourceType = 'image';
         else if (fileType.startsWith('audio/') || fileType.startsWith('video/')) resourceType = 'video';
 
         const uploadUrl = `https://api.cloudinary.com/v1_1/${sigData.cloudName}/${resourceType}/upload`;

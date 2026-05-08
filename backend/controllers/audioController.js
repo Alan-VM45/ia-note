@@ -48,8 +48,9 @@ cloudinary.config({
 });
 
 const getCloudinaryResourceType = (mimetype) => {
-    if (mimetype.startsWith('image/')) return 'image';
-    if (mimetype.startsWith('audio/') || mimetype.startsWith('video/')) return 'video';
+    const mt = mimetype.toLowerCase();
+    if (mt.startsWith('image/') || mt.includes('pdf')) return 'image';
+    if (mt.startsWith('audio/') || mt.startsWith('video/')) return 'video';
     // PPTX, DOCX, etc. se suben como 'raw'
     return 'raw';
 };
@@ -97,10 +98,12 @@ const downloadFile = (url, dest) => {
 exports.getCloudinarySignature = (req, res) => {
     try {
         const timestamp = Math.round((new Date).getTime() / 1000);
-        const signature = cloudinary.utils.api_sign_request({
+        const params = {
             timestamp: timestamp,
-            folder: 'ia-notes'
-        }, process.env.CLOUDINARY_API_SECRET);
+            folder: 'ia-notes',
+            access_mode: 'public' // Asegurar que sea público para que el backend pueda descargarlo
+        };
+        const signature = cloudinary.utils.api_sign_request(params, process.env.CLOUDINARY_API_SECRET);
 
         res.json({
             signature,
