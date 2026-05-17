@@ -80,9 +80,20 @@ const uploadToCloudinary = (filePath, mimetype) => {
 const downloadFile = (url, dest) => {
     return new Promise((resolve, reject) => {
         const file = fs.createWriteStream(dest);
-        https.get(url, (response) => {
+        const options = {
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': '*/*'
+            }
+        };
+        https.get(url, options, (response) => {
+            if (response.statusCode >= 300 && response.statusCode < 400 && response.headers.location) {
+                file.close();
+                return downloadFile(response.headers.location, dest).then(resolve).catch(reject);
+            }
             if (response.statusCode !== 200) {
-                return reject(new Error('Failed to download file from Cloudinary, status: ' + response.statusCode));
+                file.close();
+                return reject(new Error(`Failed to download file from Cloudinary, status: ${response.statusCode}, url: ${url}`));
             }
             response.pipe(file);
             file.on('finish', () => {
@@ -157,13 +168,22 @@ exports.processUrl = async (req, res) => {
                 
                 let downloadUrl = fileUrl;
                 if (publicId && resourceType) {
-                    console.log(`[${audioId}] Generando URL firmada para descarga privada de: ${publicId}`);
-                    // Generamos una URL firmada que expire pronto para seguridad
+                    // Extraer la extensión del archivo desde la URL original
+                    let formatExt = undefined;
+                    const urlParts = fileUrl.split('?')[0].split('.');
+                    if (urlParts.length > 1) {
+                        formatExt = urlParts.pop();
+                    }
+                    
+                    console.log(`[${audioId}] Generando URL firmada para descarga privada de: ${publicId}.${formatExt || 'sin_ext'}`);
+                    
+                    // Generamos una URL firmada que incluya el formato exacto
                     downloadUrl = cloudinary.url(publicId, {
                         resource_type: resourceType,
                         type: 'upload',
                         sign_url: true,
-                        secure: true
+                        secure: true,
+                        format: formatExt
                     });
                 }
 
