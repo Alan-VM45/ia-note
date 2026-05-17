@@ -156,6 +156,16 @@ exports.processUrl = async (req, res) => {
                 console.log(`[${audioId}] Descargando archivo desde Cloudinary al servidor para analizar...`);
                 
                 let downloadUrl = fileUrl;
+                if (publicId && resourceType) {
+                    console.log(`[${audioId}] Generando URL firmada para descarga privada de: ${publicId}`);
+                    // Generamos una URL firmada que expire pronto para seguridad
+                    downloadUrl = cloudinary.url(publicId, {
+                        resource_type: resourceType,
+                        type: 'upload',
+                        sign_url: true,
+                        secure: true
+                    });
+                }
 
                 await downloadFile(downloadUrl, tempFilePath);
                 
