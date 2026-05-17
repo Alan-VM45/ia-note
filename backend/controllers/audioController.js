@@ -100,8 +100,7 @@ exports.getCloudinarySignature = (req, res) => {
         const timestamp = Math.round((new Date).getTime() / 1000);
         const params = {
             timestamp: timestamp,
-            folder: 'ia-notes',
-            access_mode: 'public' // Asegurar que sea público para que el backend pueda descargarlo
+            folder: 'ia-notes'
         };
         const signature = cloudinary.utils.api_sign_request(params, process.env.CLOUDINARY_API_SECRET);
 
@@ -157,16 +156,6 @@ exports.processUrl = async (req, res) => {
                 console.log(`[${audioId}] Descargando archivo desde Cloudinary al servidor para analizar...`);
                 
                 let downloadUrl = fileUrl;
-                if (publicId && resourceType) {
-                    console.log(`[${audioId}] Generando URL firmada para descarga privada de: ${publicId}`);
-                    // Generamos una URL firmada que expire pronto para seguridad
-                    downloadUrl = cloudinary.url(publicId, {
-                        resource_type: resourceType,
-                        type: 'upload',
-                        sign_url: true,
-                        secure: true
-                    });
-                }
 
                 await downloadFile(downloadUrl, tempFilePath);
                 

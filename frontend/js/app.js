@@ -383,7 +383,6 @@ async function uploadFile(file, fileName) {
         cloudinaryFormData.append('timestamp', sigData.timestamp);
         cloudinaryFormData.append('signature', sigData.signature);
         cloudinaryFormData.append('folder', 'ia-notes');
-        cloudinaryFormData.append('access_mode', 'public'); // Requerido por la nueva firma
 
         // Determinar el tipo de recurso para Cloudinary (video es para audio/video)
         let resourceType = 'raw';
