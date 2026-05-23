@@ -3,10 +3,19 @@ const fs = require('fs');
 const path = require('path');
 const { client } = require('../database');
 const cloudinary = require('cloudinary').v2;
-const officeModule = require('office-text-extractor');
-const officeTextExtractor = officeModule.officeTextExtractor || officeModule.default || officeModule;
 
 const ai = new GoogleGenAI(process.env.GEMINI_API_KEY || '');
+
+let officeExtractorPromise = null;
+
+async function extractDocumentText(filePath) {
+    if (!officeExtractorPromise) {
+        officeExtractorPromise = import('office-text-extractor').then(({ getTextExtractor }) => getTextExtractor());
+    }
+    const extractor = await officeExtractorPromise;
+    const text = await extractor.extractText({ input: filePath, type: 'file' });
+    return text || '';
+}
 
 const ORIGINAL_SUMMARY_PROMPT = `
 Eres un asistente educativo experto. Analiza el material proporcionado y genera:
@@ -173,7 +182,7 @@ async function processWithGemini(audioId, tempFilePath, fileObj) {
     try {
         if (isDocument) {
             console.log(`[${audioId}] Detectado documento, extrayendo texto...`);
-            const extractedText = await officeTextExtractor(tempFilePath);
+            const extractedText = await extractDocumentText(tempFilePath);
 
             const CHUNK_SIZE = 15000;
             const textChunks = [];
