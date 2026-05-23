@@ -1,14 +1,28 @@
 const { GoogleGenAI } = require('@google/genai');
 const fs = require('fs');
 const path = require('path');
-const https = require('https');
 const { client } = require('../database');
 const cloudinary = require('cloudinary').v2;
-// Intento de importación robusta para diferentes versiones de la librería
 const officeModule = require('office-text-extractor');
 const officeTextExtractor = officeModule.officeTextExtractor || officeModule.default || officeModule;
 
 const ai = new GoogleGenAI(process.env.GEMINI_API_KEY || '');
+
+const ORIGINAL_SUMMARY_PROMPT = `
+Eres un asistente educativo experto. Analiza el material proporcionado y genera:
+- Un título descriptivo
+- Un resumen conciso y estructurado (puntos clave, conceptos principales)
+- La transcripción o extracción de texto completa
+- Un mapa mental en sintaxis Mermaid.js
+
+IMPORTANTE: Responde EXCLUSIVAMENTE en formato JSON con esta estructura:
+{
+  "titulo": "Título descriptivo del material",
+  "resumen": "Resumen estructurado en Markdown (conciso, con puntos clave)",
+  "transcripcion": "Transcripción o extracción de texto completa",
+  "mapa_mental": "Esquema Mermaid.js (ej: graph TD\\nA-->B)"
+}
+`;
 
 const STUDY_SYSTEM_PROMPT = `
 ACTÚA COMO: Un Ingeniero en Conocimiento y Tutor de Aprendizaje de Alto Rendimiento.
@@ -32,13 +46,7 @@ ESTRUCTURA OBLIGATORIA POR TEMA:
 
 RESTRICCIÓN CRÍTICA: Si el material es muy largo, no intentes resumirlo todo en una sola respuesta si eso implica perder calidad. Si detectas que vas por la mitad del material y te estás quedando sin espacio, detente y dime: "Continuará en la siguiente parte", para que yo te pida seguir. No sacrifiques profundidad por brevedad.
 
-IMPORTANTE: Responde EXCLUSIVAMENTE en formato JSON con esta estructura:
-{
-  "titulo": "Título descriptivo del material",
-  "resumen": "El Sistema de Estudio Integral siguiendo la estructura obligatoria en Markdown",
-  "transcripcion": "Transcripción o extracción de texto completa",
-  "mapa_mental": "Esquema Mermaid.js (ej: graph TD\\nA-->B)"
-}
+Responde en Markdown bien estructurado (sin JSON). Usa encabezados, listas y tablas donde corresponda.
 `;
 
 cloudinary.config({
@@ -50,8 +58,7 @@ cloudinary.config({
 const getCloudinaryResourceType = (mimetype) => {
     const mt = mimetype.toLowerCase();
     if (mt.startsWith('image/') || mt.includes('pdf')) return 'image';
-    if (mt.startsWith('audio/') || mt.startsWith('video/')) return 'video';
-    // PPTX, DOCX, etc. se suben como 'raw'
+    if (mt.startsWith('audio/')) return 'video';
     return 'raw';
 };
 
@@ -59,8 +66,8 @@ const uploadToCloudinary = (filePath, mimetype) => {
     const resourceType = getCloudinaryResourceType(mimetype);
     return new Promise((resolve, reject) => {
         const stream = cloudinary.uploader.upload_stream(
-            { 
-                resource_type: resourceType, 
+            {
+                resource_type: resourceType,
                 folder: 'ia-notes'
             },
             (error, result) => {
@@ -77,196 +84,97 @@ const uploadToCloudinary = (filePath, mimetype) => {
     });
 };
 
-const downloadFile = (url, dest) => {
-    return new Promise((resolve, reject) => {
-        const file = fs.createWriteStream(dest);
-        const options = {
-            headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Accept': '*/*'
-            }
-        };
-        https.get(url, options, (response) => {
-            if (response.statusCode >= 300 && response.statusCode < 400 && response.headers.location) {
-                file.close();
-                return downloadFile(response.headers.location, dest).then(resolve).catch(reject);
-            }
-            if (response.statusCode !== 200) {
-                file.close();
-                return reject(new Error(`Failed to download file from Cloudinary, status: ${response.statusCode}, url: ${url}`));
-            }
-            response.pipe(file);
-            file.on('finish', () => {
-                file.close(resolve);
-            });
-        }).on('error', (err) => {
-            fs.unlink(dest, () => {});
-            reject(err);
-        });
-    });
-};
-
-exports.getCloudinarySignature = (req, res) => {
-    try {
-        const timestamp = Math.round((new Date).getTime() / 1000);
-        const params = {
-            timestamp: timestamp,
-            folder: 'ia-notes'
-        };
-        const signature = cloudinary.utils.api_sign_request(params, process.env.CLOUDINARY_API_SECRET);
-
-        res.json({
-            signature,
-            timestamp,
-            cloudName: process.env.CLOUDINARY_CLOUD_NAME,
-            apiKey: process.env.CLOUDINARY_API_KEY
-        });
-    } catch (err) {
-        console.error("Error generating signature:", err);
-        res.status(500).json({ error: "Error al generar firma de subida" });
+const parseJsonResponse = (text) => {
+    let cleanedText = text.trim();
+    if (cleanedText.startsWith('```')) {
+        cleanedText = cleanedText.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
     }
+    return JSON.parse(cleanedText);
 };
 
-exports.processUrl = async (req, res) => {
-    try {
-        const { fileUrl, mimetype, originalname, publicId, resourceType } = req.body;
-        if (!fileUrl) {
-            return res.status(400).json({ error: 'No se proporcionó URL del archivo.' });
+const callGeminiWithRetry = async (audioId, payload, retries = 3) => {
+    for (let i = 0; i < retries; i++) {
+        try {
+            return await ai.models.generateContent(payload);
+        } catch (err) {
+            if (err.message.includes('503') || err.message.includes('high demand')) {
+                console.log(`[${audioId}] Gemini ocupado (503), reintentando en ${2000 * (i + 1)}ms...`);
+                await new Promise(r => setTimeout(r, 2000 * (i + 1)));
+                continue;
+            }
+            throw err;
         }
-
-        const audioId = Date.now().toString();
-        console.log('Recibida URL de Cloudinary:', fileUrl);
-
-        // Crear registro inicial en la DB y responder rápido al cliente
-        await client.execute({
-            sql: "INSERT INTO classes (id, fecha, titulo, status, audioUrl, user_id) VALUES (?, ?, ?, ?, ?, ?)",
-            args: [
-                audioId,
-                new Date().toISOString(),
-                'Procesando contenido...',
-                'procesando',
-                fileUrl,
-                req.user.userId
-            ]
-        });
-
-        res.json({
-            id: audioId,
-            status: 'procesando',
-            message: 'Archivo en la nube recibido y en proceso de análisis.'
-        });
-
-        // Proceso pesado en background
-        (async () => {
-            const uploadsDir = path.join(__dirname, '../../uploads/');
-            if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
-            
-            const tempFilePath = path.join(uploadsDir, `download_${audioId}`);
-            
-            try {
-                console.log(`[${audioId}] Descargando archivo desde Cloudinary al servidor para analizar...`);
-                
-                let downloadUrl = fileUrl;
-                if (publicId && resourceType) {
-                    // Extraer la extensión del archivo desde la URL original
-                    let formatExt = undefined;
-                    const urlParts = fileUrl.split('?')[0].split('.');
-                    if (urlParts.length > 1) {
-                        formatExt = urlParts.pop();
-                    }
-                    
-                    console.log(`[${audioId}] Generando URL firmada para descarga privada de: ${publicId}.${formatExt || 'sin_ext'}`);
-                    
-                    // Generamos una URL firmada que incluya el formato exacto
-                    downloadUrl = cloudinary.url(publicId, {
-                        resource_type: resourceType,
-                        type: 'upload',
-                        sign_url: true,
-                        secure: true,
-                        format: formatExt
-                    });
-                }
-
-                await downloadFile(downloadUrl, tempFilePath);
-                
-                // Reutilizamos la lógica inyectando el path en un objeto simulado req.file
-                req.file = {
-                    path: tempFilePath,
-                    mimetype: mimetype || 'application/octet-stream',
-                    originalname: originalname || 'archivo_nube'
-                };
-                
-                console.log(`[${audioId}] Archivo descargado, iniciando IA...`);
-                // Lógica de Gemini (extraída de processAudio original)
-                await processWithGemini(audioId, tempFilePath, req.file, fileUrl);
-                
-            } catch (bgError) {
-                console.error(`[${audioId}] ERROR EN BACKGROUND (Gemini/Turso):`, bgError);
-                await client.execute({
-                    sql: "UPDATE classes SET status = 'error', error_message = ? WHERE id = ?",
-                    args: [bgError.message || 'Error desconocido en procesamiento', audioId]
-                });
-            } finally {
-                if (fs.existsSync(tempFilePath)) {
-                    fs.unlinkSync(tempFilePath);
-                    console.log(`[${audioId}] Archivo temporal eliminado.`);
-                }
-            }
-        })();
-
-    } catch (error) {
-        console.error('ERROR EN PROCESSURL:', error);
-        res.status(500).json({ error: 'Error al iniciar el procesamiento de URL.' });
     }
 };
 
-// Función auxiliar para separar la lógica de Gemini de processAudio y processUrl
-async function processWithGemini(audioId, tempFilePath, fileObj, audioUrl) {
+async function generateDeepLearning(audioId, transcription) {
+    if (!transcription || transcription.trim().length < 50) {
+        console.log(`[${audioId}] Transcripción muy corta, omitiendo aprendizaje profundo.`);
+        return '';
+    }
+
+    console.log(`[${audioId}] Generando aprendizaje profundo...`);
+    const CHUNK_SIZE = 15000;
+    const chunks = [];
+    for (let i = 0; i < transcription.length; i += CHUNK_SIZE) {
+        chunks.push(transcription.substring(i, i + CHUNK_SIZE));
+    }
+
+    let deepContent = '';
+    for (let i = 0; i < chunks.length; i++) {
+        const chunkPrompt = `${STUDY_SYSTEM_PROMPT}
+
+${i > 0 ? `Este es el FRAGMENTO ${i + 1} de ${chunks.length}. Continúa el análisis sin repetir introducciones generales.` : ''}
+
+MATERIAL A ANALIZAR:
+${chunks[i]}`;
+
+        const aiResponse = await callGeminiWithRetry(audioId, {
+            model: 'gemini-flash-latest',
+            contents: [{ role: 'user', parts: [{ text: chunkPrompt }] }]
+        });
+
+        deepContent += (i > 0 ? '\n\n---\n\n' : '') + aiResponse.text.trim();
+
+        if (chunks.length > 1) {
+            await client.execute({
+                sql: "UPDATE classes SET aprendizaje_profundo = ?, status = 'procesando' WHERE id = ?",
+                args: [deepContent + `\n\n*(Generando aprendizaje profundo: parte ${i + 1} de ${chunks.length}...)*`, audioId]
+            });
+        }
+    }
+
+    return deepContent;
+}
+
+async function processWithGemini(audioId, tempFilePath, fileObj) {
     const mimetype = fileObj.mimetype.toLowerCase();
     const originalName = fileObj.originalname.toLowerCase();
 
-    // Detectar si es un documento de texto (PDF, Word, Powerpoint, Texto)
-    const isDocument = mimetype.includes('officedocument') || 
-                      mimetype.includes('ms-powerpoint') || 
-                      mimetype.includes('msword') ||
-                      mimetype.includes('application/pdf') ||
-                      mimetype.includes('text/plain') ||
-                      originalName.endsWith('.docx') ||
-                      originalName.endsWith('.pptx') ||
-                      originalName.endsWith('.ppt') ||
-                      originalName.endsWith('.doc') ||
-                      originalName.endsWith('.pdf') ||
-                      originalName.endsWith('.txt');
-
-    const callGeminiWithRetry = async (payload, retries = 3) => {
-        for (let i = 0; i < retries; i++) {
-            try {
-                return await ai.models.generateContent(payload);
-            } catch (err) {
-                if (err.message.includes('503') || err.message.includes('high demand')) {
-                    console.log(`[${audioId}] Gemini ocupado (503), reintentando en ${2000 * (i + 1)}ms...`);
-                    await new Promise(r => setTimeout(r, 2000 * (i + 1)));
-                    continue;
-                }
-                throw err;
-            }
-        }
-    };
+    const isDocument = mimetype.includes('officedocument') ||
+        mimetype.includes('ms-powerpoint') ||
+        mimetype.includes('msword') ||
+        mimetype.includes('application/pdf') ||
+        mimetype.includes('text/plain') ||
+        originalName.endsWith('.docx') ||
+        originalName.endsWith('.pptx') ||
+        originalName.endsWith('.ppt') ||
+        originalName.endsWith('.doc') ||
+        originalName.endsWith('.pdf') ||
+        originalName.endsWith('.txt');
 
     let aiData = {
         titulo: originalName,
-        resumen: "",
-        transcripcion: "",
-        mapa_mental: ""
+        resumen: '',
+        transcripcion: '',
+        mapa_mental: ''
     };
 
     try {
         if (isDocument) {
-            console.log(`[${audioId}] Detectado documento, extrayendo texto para segmentación...`);
+            console.log(`[${audioId}] Detectado documento, extrayendo texto...`);
             const extractedText = await officeTextExtractor(tempFilePath);
-            
-            // Forzamos segmentación: dividimos el texto en trozos de aprox 15k caracteres
-            // para evitar el "Lost in the Middle" y asegurar profundidad.
+
             const CHUNK_SIZE = 15000;
             const textChunks = [];
             for (let i = 0; i < extractedText.length; i += CHUNK_SIZE) {
@@ -277,42 +185,34 @@ async function processWithGemini(audioId, tempFilePath, fileObj, audioUrl) {
 
             for (let i = 0; i < textChunks.length; i++) {
                 const chunkPrompt = `Este es el FRAGMENTO ${i + 1} de ${textChunks.length} del material "${originalName}".
-                ${STUDY_SYSTEM_PROMPT}
-                
-                ${i > 0 ? "IMPORTANTE: Este es un fragmento de continuación. No repitas el título general, enfócate en desarrollar los temas de este fragmento siguiendo la estructura obligatoria." : ""}
-                
-                CONTENIDO DEL FRAGMENTO:
-                ${textChunks[i]}`;
+${ORIGINAL_SUMMARY_PROMPT}
+${i > 0 ? 'IMPORTANTE: Fragmento de continuación. No repitas el título general, enfócate en este fragmento.' : ''}
 
-                const aiResponse = await callGeminiWithRetry({
+CONTENIDO DEL FRAGMENTO:
+${textChunks[i]}`;
+
+                const aiResponse = await callGeminiWithRetry(audioId, {
                     model: 'gemini-flash-latest',
-                    config: { responseMimeType: "application/json" },
+                    config: { responseMimeType: 'application/json' },
                     contents: [{ role: 'user', parts: [{ text: chunkPrompt }] }]
                 });
 
-                let cleanedText = aiResponse.text.trim();
-                if (cleanedText.startsWith('```')) {
-                    cleanedText = cleanedText.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
-                }
-                
-                const partData = JSON.parse(cleanedText);
-                
+                const partData = parseJsonResponse(aiResponse.text);
+
                 if (i === 0) {
                     aiData.titulo = partData.titulo;
                     aiData.mapa_mental = partData.mapa_mental;
                 }
-                aiData.resumen += (i > 0 ? "\n\n---\n\n" : "") + partData.resumen;
-                aiData.transcripcion += (i > 0 ? "\n\n" : "") + (partData.transcripcion || textChunks[i]);
+                aiData.resumen += (i > 0 ? '\n\n---\n\n' : '') + partData.resumen;
+                aiData.transcripcion += (i > 0 ? '\n\n' : '') + (partData.transcripcion || textChunks[i]);
 
-                // Actualizar progreso en DB opcionalmente
                 await client.execute({
-                    sql: "UPDATE classes SET resumen = ?, status = 'procesando' WHERE id = ?",
-                    args: [aiData.resumen + "\n\n*(Procesando parte " + (i + 1) + " de " + textChunks.length + "...)*", audioId]
+                    sql: 'UPDATE classes SET resumen = ?, status = ? WHERE id = ?',
+                    args: [aiData.resumen + `\n\n*(Procesando parte ${i + 1} de ${textChunks.length}...)*`, 'procesando', audioId]
                 });
             }
         } else {
-            // Proceso para Audio/Video/Imágenes (usamos File API de Gemini)
-            console.log(`[${audioId}] Procesando multimedia con File API...`);
+            console.log(`[${audioId}] Procesando audio con File API...`);
             const uploadResult = await ai.files.upload({
                 file: tempFilePath,
                 config: { mimeType: fileObj.mimetype }
@@ -328,32 +228,30 @@ async function processWithGemini(audioId, tempFilePath, fileObj, audioUrl) {
 
             if (file.state !== 'ACTIVE') throw new Error('Gemini falló: ' + file.state);
 
-            const aiResponse = await callGeminiWithRetry({
+            const aiResponse = await callGeminiWithRetry(audioId, {
                 model: 'gemini-flash-latest',
-                config: { responseMimeType: "application/json" },
+                config: { responseMimeType: 'application/json' },
                 contents: [{
                     role: 'user',
                     parts: [
                         { fileData: { fileUri: uploadResult.uri, mimeType: uploadResult.mimeType } },
-                        { text: STUDY_SYSTEM_PROMPT }
+                        { text: ORIGINAL_SUMMARY_PROMPT }
                     ]
                 }]
             });
 
-            let cleanedText = aiResponse.text.trim();
-            if (cleanedText.startsWith('```')) {
-                cleanedText = cleanedText.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
-            }
-            const data = JSON.parse(cleanedText);
+            const data = parseJsonResponse(aiResponse.text);
             aiData.titulo = data.titulo;
             aiData.resumen = data.resumen;
             aiData.transcripcion = data.transcripcion;
             aiData.mapa_mental = data.mapa_mental;
         }
 
+        const aprendizajeProfundo = await generateDeepLearning(audioId, aiData.transcripcion);
+
         await client.execute({
-            sql: "UPDATE classes SET titulo = ?, resumen = ?, transcripcion = ?, mapa_mental = ?, status = 'completado' WHERE id = ?",
-            args: [aiData.titulo, aiData.resumen, aiData.transcripcion, aiData.mapa_mental, audioId]
+            sql: 'UPDATE classes SET titulo = ?, resumen = ?, aprendizaje_profundo = ?, transcripcion = ?, mapa_mental = ?, status = ? WHERE id = ?',
+            args: [aiData.titulo, aiData.resumen, aprendizajeProfundo, aiData.transcripcion, aiData.mapa_mental, 'completado', audioId]
         });
         console.log(`[${audioId}] Procesamiento completado con éxito.`);
 
@@ -363,45 +261,38 @@ async function processWithGemini(audioId, tempFilePath, fileObj, audioUrl) {
     }
 }
 
-
-
 exports.processAudio = async (req, res) => {
     try {
         if (!req.file) {
-            return res.status(400).json({ error: 'No se subió ningún archivo de audio.' });
+            return res.status(400).json({ error: 'No se subió ningún archivo.' });
         }
 
         const tempFilePath = req.file.path;
-        let audioId; // Definir fuera para que esté disponible en el catch si es necesario
-        console.log('Audio recibido:', {
+        console.log('Archivo recibido:', {
             path: tempFilePath,
             size: req.file.size,
             mimetype: req.file.mimetype
         });
 
-        // 1. Subir a Cloudinary para almacenamiento permanente usando Streams (Cero RAM)
-        console.log('Iniciando subida a Cloudinary vía Stream...');
         let cloudinaryResult;
-        
         try {
             cloudinaryResult = await uploadToCloudinary(tempFilePath, req.file.mimetype);
         } catch (cloudErr) {
             console.error('Error crítico subiendo a Cloudinary:', cloudErr);
-            return res.status(500).json({ 
+            if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
+            return res.status(500).json({
                 error: 'Error al guardar el archivo en la nube.',
-                details: cloudErr.message 
+                details: cloudErr.message
             });
         }
 
         const audioUrl = cloudinaryResult.secure_url;
         console.log('Subida a Cloudinary exitosa:', audioUrl);
 
-        audioId = Date.now().toString();
+        const audioId = Date.now().toString();
 
-        // 2. Crear registro inicial en "procesando" y responder al cliente
-        console.log('Creando registro inicial en la DB...');
         await client.execute({
-            sql: "INSERT INTO classes (id, fecha, titulo, status, audioUrl, user_id) VALUES (?, ?, ?, ?, ?, ?)",
+            sql: 'INSERT INTO classes (id, fecha, titulo, status, audioUrl, user_id) VALUES (?, ?, ?, ?, ?, ?)',
             args: [
                 audioId,
                 new Date().toISOString(),
@@ -412,41 +303,29 @@ exports.processAudio = async (req, res) => {
             ]
         });
 
-        // Respondemos inmediatamente al frontend para evitar el timeout de Render
         res.json({
             id: audioId,
             status: 'procesando',
             message: 'Archivo recibido y en proceso de análisis.'
         });
 
-        // 3. Iniciar procesamiento pesado en "segundo plano"
         (async () => {
             try {
                 console.log(`[${audioId}] Iniciando proceso Gemini en background...`);
-                await processWithGemini(audioId, tempFilePath, req.file, audioUrl);
+                await processWithGemini(audioId, tempFilePath, req.file);
             } catch (bgError) {
-                console.error(`[${audioId}] ERROR EN BACKGROUND (Gemini/Turso):`, bgError);
-                
-                // Loguear error exacto de Turso si existe
-                if (bgError.cause) {
-                    console.error('Causa del error:', bgError.cause);
-                }
-
+                console.error(`[${audioId}] ERROR EN BACKGROUND:`, bgError);
                 await client.execute({
                     sql: "UPDATE classes SET status = 'error', error_message = ? WHERE id = ?",
                     args: [bgError.message || 'Error desconocido en procesamiento', audioId]
                 });
-
             } finally {
-                // Limpiar archivo temporal al final del proceso de fondo
                 if (fs.existsSync(tempFilePath)) {
                     fs.unlinkSync(tempFilePath);
                     console.log(`[${audioId}] Archivo temporal eliminado.`);
                 }
             }
         })();
-
-        return; // Fin de la función principal (la respuesta ya se envió)
 
     } catch (error) {
         console.error('ERROR EN PROCESSAUDIO (INICIAL):', error);
@@ -457,7 +336,7 @@ exports.processAudio = async (req, res) => {
 exports.getClasses = async (req, res) => {
     try {
         const rs = await client.execute({
-            sql: "SELECT id, titulo, fecha, status FROM classes WHERE user_id = ? ORDER BY fecha DESC",
+            sql: 'SELECT id, titulo, fecha, status FROM classes WHERE user_id = ? ORDER BY fecha DESC',
             args: [req.user.userId]
         });
         res.json(rs.rows);
@@ -470,10 +349,10 @@ exports.getClasses = async (req, res) => {
 exports.getClassById = async (req, res) => {
     try {
         const rs = await client.execute({
-            sql: "SELECT * FROM classes WHERE id = ? AND user_id = ?",
+            sql: 'SELECT * FROM classes WHERE id = ? AND user_id = ?',
             args: [req.params.id, req.user.userId]
         });
-        
+
         if (rs.rows.length === 0) {
             return res.status(404).json({ error: 'Clase no encontrada' });
         }
@@ -488,7 +367,7 @@ exports.deleteClass = async (req, res) => {
     try {
         const { id } = req.params;
         await client.execute({
-            sql: "DELETE FROM classes WHERE id = ? AND user_id = ?",
+            sql: 'DELETE FROM classes WHERE id = ? AND user_id = ?',
             args: [id, req.user.userId]
         });
         res.json({ message: 'Clase eliminada con éxito' });
@@ -531,7 +410,6 @@ ${question}`;
     }
 };
 
-
 exports.uploadChunk = async (req, res) => {
     try {
         const { sessionId, chunkIndex } = req.body;
@@ -541,18 +419,16 @@ exports.uploadChunk = async (req, res) => {
         if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
 
         const tempPath = path.join(uploadsDir, `temp_${sessionId}.webm`);
-        
-        // Append usando streams para cumplir con "Cero RAM"
+
         const writeStream = fs.createWriteStream(tempPath, { flags: 'a' });
         const readStream = fs.createReadStream(req.file.path);
-        
+
         await new Promise((resolve, reject) => {
             readStream.pipe(writeStream);
             writeStream.on('finish', resolve);
             writeStream.on('error', reject);
         });
 
-        // Eliminar el archivo temporal del chunk que creó multer
         if (fs.existsSync(req.file.path)) {
             fs.unlinkSync(req.file.path);
         }
@@ -560,9 +436,9 @@ exports.uploadChunk = async (req, res) => {
         res.json({ success: true, message: `Fragmento ${chunkIndex} guardado.` });
     } catch (error) {
         console.error('ERROR EN UPLOADCHUNK:', error);
-        res.status(500).json({ 
+        res.status(500).json({
             error: 'Error al procesar el fragmento de audio.',
-            details: error.message 
+            details: error.message
         });
     }
 };
@@ -572,16 +448,12 @@ exports.processChunks = async (req, res) => {
         const { sessionId, fileName, mimetype } = req.body;
         const uploadsDir = path.join(__dirname, '../../uploads/');
         const tempPath = path.join(uploadsDir, `temp_${sessionId}.webm`);
-        
+
         if (!fs.existsSync(tempPath)) {
-            console.error(`Sesión no encontrada: ${sessionId}`);
             return res.status(404).json({ error: 'No se encontraron fragmentos para esta sesión.' });
         }
 
         const stats = fs.statSync(tempPath);
-        console.log(`Procesando audio reunido: ${tempPath} (${stats.size} bytes)`);
-
-        // Simulamos el objeto req.file para reutilizar la lógica de processAudio
         req.file = {
             path: tempPath,
             size: stats.size,
@@ -589,7 +461,6 @@ exports.processChunks = async (req, res) => {
             originalname: fileName || 'grabacion_larga.webm'
         };
 
-        // Delegamos a processAudio
         return exports.processAudio(req, res);
     } catch (error) {
         console.error('ERROR EN PROCESSCHUNKS:', error);

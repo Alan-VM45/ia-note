@@ -82,8 +82,8 @@
             <button id="btn-stop-record" class="btn-stop-main hidden">⏹️</button>
             <div class="upload-area">
                 <p>o también puedes</p>
-                <button id="btn-trigger-file" class="btn secondary btn-full">📁 Subir Archivo (PDF, Video, etc.)</button>
-                <input type="file" id="file-input" class="hidden">
+                <button id="btn-trigger-file" class="btn secondary btn-full">📁 Subir Archivo (Audio, PDF, Word, PPT)</button>
+                <input type="file" id="file-input" class="hidden" accept="audio/*,.pdf,.doc,.docx,.ppt,.pptx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation">
             </div>
         </div>
     </div>
@@ -103,6 +103,7 @@
             <div class="tabs">
                 <button class="tab-btn" data-target="tab-transcription">📝</button>
                 <button class="tab-btn active" data-target="tab-summary">📑 Resumen</button>
+                <button class="tab-btn" data-target="tab-deep-learning">🧠 Aprendizaje</button>
                 <button class="tab-btn" data-target="tab-mindmap">🔀 Mapa</button>
                 <button class="tab-btn" data-target="tab-chat">🤖 Chat IA</button>
             </div>
@@ -116,8 +117,17 @@
             
             <!-- Tab: Resumen -->
             <div id="tab-summary" class="tab-pane active">
-                <button class="btn primary btn-full" id="btn-export-word" style="margin-bottom: 1.5rem; background-color: #2563eb;">📄 Guardar como Word</button>
+                <button class="btn primary btn-full btn-export" id="btn-export-word">📄 Guardar como Word</button>
                 <div class="markdown-content" id="content-summary"></div>
+            </div>
+
+            <!-- Tab: Aprendizaje Profundo -->
+            <div id="tab-deep-learning" class="tab-pane">
+                <div class="deep-learning-header">
+                    <span class="deep-learning-badge">🧠 Modo Estudio Profundo</span>
+                    <p class="deep-learning-subtitle">Explicaciones técnicas, analogías Feynman y autoevaluaciones</p>
+                </div>
+                <div class="markdown-content deep-learning-content" id="content-deep-learning"></div>
             </div>
             
             <!-- Tab: Mapa Mental -->
@@ -144,6 +154,16 @@
         </div>
     </div>
 
+    <!-- VISTA DE ERROR -->
+    <div id="view-error" class="view">
+        <div class="error-container">
+            <div class="error-icon">⚠️</div>
+            <h2 class="error-title">Algo salió mal</h2>
+            <p class="error-message" id="error-message-text">Ha ocurrido un error inesperado.</p>
+            <button class="btn primary btn-full" id="btn-error-back">Volver al inicio</button>
+        </div>
+    </div>
+
     <!-- VISTA DE CONSEJOS Y NOVEDADES -->
     <div id="view-tips" class="view">
         <header class="app-header">
@@ -155,7 +175,7 @@
                 <div class="tip-icon">✨</div>
                 <div class="tip-content">
                     <h4>¡Ahora EvoClass es Universal!</h4>
-                    <p>Ya no solo puedes grabar audios. Ahora puedes subir <strong>PDFs, Word, Videos</strong> y hasta <strong>fotos de pizarrones</strong>. Gemini lo analizará todo.</p>
+                    <p>Graba audios en vivo o sube <strong>PDFs, Word y PowerPoint</strong>. Gemini generará un resumen conciso y un modo de aprendizaje profundo con autoevaluaciones.</p>
                 </div>
             </div>
 
@@ -163,17 +183,17 @@
                 <div class="tip-item">
                     <span class="tip-badge">IMPORTANTE</span>
                     <h4>Clases de +1 Hora</h4>
-                    <p>Si tienes un video muy largo, intenta subir solo el audio (MP3) para que sea más rápido. Las grabaciones directas de la app están optimizadas para durar horas ocupando poco espacio.</p>
+                    <p>Las grabaciones directas de la app están optimizadas para durar horas ocupando poco espacio. También puedes subir un MP3 o M4A grabado externamente.</p>
                 </div>
                 <div class="tip-item">
                     <span class="tip-badge">TIP</span>
-                    <h4>Audios y Videos</h4>
-                    <p>Asegúrate de tener una conexión estable. No cierres la pestaña hasta que veas el mensaje de éxito.</p>
+                    <h4>Subida de Archivos</h4>
+                    <p>Asegúrate de tener una conexión estable. El archivo se envía al servidor y se procesa en segundo plano.</p>
                 </div>
                 <div class="tip-item">
                     <span class="tip-badge">LÍMITES</span>
                     <h4>Capacidad</h4>
-                    <p>Puedes subir archivos de hasta 300MB. Ideal para documentos extensos o grabaciones de clase en video comprimido.</p>
+                    <p>Puedes subir archivos de hasta 150MB. Ideal para documentos extensos o grabaciones de clase largas.</p>
                 </div>
                 <div class="tip-item">
                     <span class="tip-badge">TIP</span>

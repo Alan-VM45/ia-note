@@ -47,6 +47,11 @@ async function initDB() {
     await client.execute("ALTER TABLE classes ADD COLUMN error_message TEXT");
     console.log("Columna error_message añadida con éxito");
   } catch (e) {}
+
+  try {
+    await client.execute("ALTER TABLE classes ADD COLUMN aprendizaje_profundo TEXT");
+    console.log("Columna aprendizaje_profundo añadida con éxito");
+  } catch (e) {}
 }
 
 module.exports = { client, initDB };

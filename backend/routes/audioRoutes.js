@@ -8,7 +8,7 @@ const path = require('path');
 // Configuración de multer para guardar archivos temporalmente
 const upload = multer({ 
     dest: path.join(__dirname, '../../uploads/'),
-    limits: { fileSize: 300 * 1024 * 1024 } // Límite aumentado a 300MB para videos largos
+    limits: { fileSize: 150 * 1024 * 1024 } // Máx 150MB (audio y documentos)
 });
 
 // Rutas de Auth
@@ -23,11 +23,7 @@ router.get('/classes', audioController.getClasses);
 router.get('/classes/:id', audioController.getClassById);
 router.delete('/classes/:id', audioController.deleteClass);
 
-// Rutas de Cloudinary Direct Upload
-router.get('/cloudinary-signature', audioController.getCloudinarySignature);
-router.post('/process-url', audioController.processUrl);
-
-// Ruta para subir el audio y procesarlo
+// Ruta para subir archivo y procesarlo (backend → Cloudinary → Gemini)
 router.post('/upload-audio', upload.single('audio'), audioController.processAudio);
 
 // Rutas para subida fragmentada (Audios > 5 min)
